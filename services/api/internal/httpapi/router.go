@@ -17,6 +17,7 @@ import (
 	"github.com/example/ai-fitness-os/services/api/internal/catalog"
 	"github.com/example/ai-fitness-os/services/api/internal/healthdata"
 	"github.com/example/ai-fitness-os/services/api/internal/media"
+	"github.com/example/ai-fitness-os/services/api/internal/model"
 	"github.com/example/ai-fitness-os/services/api/internal/nutrition"
 	"github.com/example/ai-fitness-os/services/api/internal/profile"
 	"github.com/example/ai-fitness-os/services/api/internal/programs"

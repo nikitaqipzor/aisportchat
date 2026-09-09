@@ -33,6 +33,7 @@ Independently review the athlete-profile, manual-workout and training-progress b
 - PASS: OpenAPI YAML parsed with Python/PyYAML.
 - PASS: `git diff --check`.
 - NOT RUN: Go unit and PostgreSQL integration tests; Go/gofmt and a PostgreSQL test service are unavailable in this workspace.
+- CI follow-up: corrected the missing `model` import reported by the Go compiler and aligned the owner-isolation assertion with the memory store's explicit `ErrForbidden` contract (`ErrNotFound` remains accepted for stores that conceal resource existence).
 
 ## Unresolved items
 

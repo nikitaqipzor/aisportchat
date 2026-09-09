@@ -116,7 +116,7 @@ func TestCreateManualWorkoutValidatesAndPersistsSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Get(ctx, other.ID, created.Workout.ID); !errors.Is(err, store.ErrNotFound) {
+	if _, err := svc.Get(ctx, other.ID, created.Workout.ID); !errors.Is(err, store.ErrForbidden) && !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("manual workout leaked across owners: %v", err)
 	}
 
