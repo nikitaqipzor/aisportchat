@@ -1,6 +1,9 @@
 package profile
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 var allowedGoals = map[string]bool{"muscle_gain": true, "fat_loss": true, "recomposition": true, "strength": true, "maintenance": true, "endurance": true}
 var allowedLevels = map[string]bool{"beginner": true, "intermediate": true, "advanced": true}
@@ -25,6 +28,18 @@ func ValidateEnvironments(items []string) error {
 	for _, v := range items {
 		if !allowedEnvironments[v] {
 			return errors.New("unsupported environment: " + v)
+		}
+	}
+	return nil
+}
+
+func ValidateNotes(field string, items []string) error {
+	if len(items) > 20 {
+		return errors.New(field + " must contain at most 20 items")
+	}
+	for _, item := range items {
+		if len([]rune(strings.TrimSpace(item))) == 0 || len([]rune(item)) > 120 {
+			return errors.New(field + " items must contain 1 to 120 characters")
 		}
 	}
 	return nil

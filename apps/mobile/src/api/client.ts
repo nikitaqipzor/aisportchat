@@ -19,8 +19,16 @@ export type OnboardingStatus = {
 };
 
 export type ProfileResponse = {
-  profile: Record<string, unknown>;
-  goal?: Record<string, unknown>;
+  profile: {
+    height_cm?: number;
+    weight_kg?: number;
+    experience_level?: 'beginner' | 'intermediate' | 'advanced';
+    age_years?: number;
+    injuries: string[];
+    limitations: string[];
+    unit_system: 'metric' | 'imperial';
+  };
+  goal?: {goal_type: string; target_weight_kg?: number};
   training_preferences?: {
     environments: Array<'home' | 'gym' | 'band'>;
     equipment_ids: string[];
@@ -110,6 +118,13 @@ export type HistoryFilters = {
   favorite?: boolean;
 };
 
+export type WorkoutProgressSummary = {
+  period_days: number; completed_workouts: number; training_days: number; workouts_per_week: number;
+  total_sets: number; total_volume: number; recent_volume_7d: number; previous_volume_7d: number;
+  weekly_streak: number; personal_record_count: number;
+  exercise_bests: Array<{exercise_id: string; exercise_name: string; max_weight?: number; max_reps: number}>;
+};
+
 export type WorkoutView = {
   workout: {
     id: string;
@@ -128,6 +143,14 @@ export type WorkoutView = {
   };
   exercises: ExerciseView[];
   personal_records: PersonalRecord[];
+};
+
+export type ManualWorkoutExerciseInput = {
+  exercise_id: string;
+  target_sets: number;
+  target_reps: number;
+  target_weight?: number;
+  rest_seconds: number;
 };
 
 export type FinishResult = {
@@ -680,11 +703,11 @@ export const api = {
   getProfile(accessToken: string) {
     return request<ProfileResponse>('/profile', {method: 'GET'}, accessToken);
   },
-  updateProfile(accessToken: string, payload: {height_cm: number; weight_kg: number; experience_level: string; unit_system: 'metric'}) {
+  updateProfile(accessToken: string, payload: {height_cm: number; weight_kg: number; experience_level: string; age_years?: number; injuries?: string[]; limitations?: string[]; unit_system: 'metric'}) {
     return request('/profile', {method: 'PATCH', body: JSON.stringify(payload)}, accessToken);
   },
-  setGoal(accessToken: string, goalType: string) {
-    return request('/profile/goal', {method: 'PUT', body: JSON.stringify({goal_type: goalType})}, accessToken);
+  setGoal(accessToken: string, goalType: string, targetWeightKG?: number) {
+    return request('/profile/goal', {method: 'PUT', body: JSON.stringify({goal_type: goalType, target_weight_kg: targetWeightKG})}, accessToken);
   },
   setTrainingPreferences(accessToken: string, payload: {environments: string[]; equipment_ids: string[]; workouts_per_week: number; session_minutes: number}) {
     return request('/profile/training-preferences', {method: 'PUT', body: JSON.stringify(payload)}, accessToken);
@@ -694,6 +717,16 @@ export const api = {
   },
   generateWorkout(accessToken: string, muscle: string, environment: 'home' | 'gym' | 'band', localDate?: string) {
     return request<WorkoutView>('/workouts/generate', {method: 'POST', body: JSON.stringify({muscle, environment, local_date: localDate})}, accessToken);
+  },
+  listExercises(accessToken: string, filters: {muscle?: string; environment?: 'home'|'gym'|'band'; query?: string} = {}) {
+    const query = new URLSearchParams();
+    if (filters.muscle) query.set('muscle', filters.muscle);
+    if (filters.environment) query.set('environment', filters.environment);
+    if (filters.query) query.set('query', filters.query);
+    return request<{items: Exercise[]}>(`/exercises?${query.toString()}`, {method: 'GET'}, accessToken);
+  },
+  createManualWorkout(accessToken: string, payload: {muscle: string; environment: 'home'|'gym'|'band'; duration_minutes: number; exercises: ManualWorkoutExerciseInput[]}) {
+    return request<WorkoutView>('/workouts/manual', {method: 'POST', body: JSON.stringify(payload)}, accessToken);
   },
   activeWorkout(accessToken: string) {
     return request<WorkoutView | undefined>('/workouts/active', {method: 'GET'}, accessToken);
@@ -724,6 +757,9 @@ export const api = {
     if (filters.status) query.set('status', filters.status);
     if (filters.favorite !== undefined) query.set('favorite', String(filters.favorite));
     return request<{items: WorkoutView[]}>(`/workouts/history?${query.toString()}`, {method: 'GET'}, accessToken);
+  },
+  workoutProgressSummary(accessToken: string, days = 28) {
+    return request<WorkoutProgressSummary>(`/workouts/progress-summary?days=${days}`, {method: 'GET'}, accessToken);
   },
   muscleStats(accessToken: string, muscle: string) {
     return request<MuscleStats>(`/muscles/${muscle}/stats`, {method: 'GET'}, accessToken);

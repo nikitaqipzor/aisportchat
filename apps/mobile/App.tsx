@@ -30,6 +30,8 @@ import {BodyScanScreen} from './src/screens/BodyScanScreen';
 import {TechniqueScreen} from './src/screens/TechniqueScreen';
 import {RecoveryScreen} from './src/screens/RecoveryScreen';
 import {ConnectedDevicesScreen} from './src/screens/ConnectedDevicesScreen';
+import {ManualWorkoutScreen} from './src/screens/ManualWorkoutScreen';
+import {AthleteProfileScreen} from './src/screens/AthleteProfileScreen';
 import {sessionStorage} from './src/storage/session';
 import {flushOfflineQueue} from './src/storage/sync';
 import {MuscleId} from './src/domain/muscles';
@@ -38,7 +40,7 @@ import {BottomNavigation, MainTab} from './src/components/BottomNavigation';
 import {refreshTodayIfPossible} from './src/health/sync';
 import {healthConnect} from './src/native/healthConnect';
 
-type Step = 'auth' | 'goal' | 'profile' | 'training' | 'home' | 'muscle' | 'preview' | 'active' | 'summary' | 'history' | 'workoutDetail' | 'nutrition' | 'nutritionSetup' | 'foodSearch' | 'customFood' | 'recipes' | 'progress' | 'aiFood' | 'foodPhoto' | 'aiCoach' | 'weeklyAI' | 'programs' | 'programSetup' | 'programDetail' | 'bodyScan' | 'technique' | 'recovery' | 'devices';
+type Step = 'auth' | 'goal' | 'profile' | 'training' | 'profileSettings' | 'home' | 'muscle' | 'manualWorkout' | 'preview' | 'active' | 'summary' | 'history' | 'workoutDetail' | 'nutrition' | 'nutritionSetup' | 'foodSearch' | 'customFood' | 'recipes' | 'progress' | 'aiFood' | 'foodPhoto' | 'aiCoach' | 'weeklyAI' | 'programs' | 'programSetup' | 'programDetail' | 'bodyScan' | 'technique' | 'recovery' | 'devices';
 type Environment = 'home' | 'gym' | 'band';
 
 function nextOnboardingStep(status: OnboardingStatus): Step {
@@ -133,6 +135,7 @@ export default function App() {
         setStep(selectedMuscle ? 'muscle' : 'home');
         return true;
       }
+      if (step === 'manualWorkout') { setStep('home'); return true; }
       if (step === 'muscle' || step === 'history' || step === 'nutrition' || step === 'progress' || step === 'aiCoach' || step === 'programs') {
         setStep('home');
         return true;
@@ -144,7 +147,7 @@ export default function App() {
       if (step === 'foodPhoto') { setStep('aiFood'); return true; }
       if (step === 'weeklyAI') { setStep('aiCoach'); return true; }
       if (step === 'bodyScan') { setStep('progress'); return true; }
-      if (step === 'recovery' || step === 'devices') { setStep('home'); return true; }
+      if (step === 'recovery' || step === 'devices' || step === 'profileSettings') { setStep('home'); return true; }
       if (step === 'technique') { setStep(techniqueContext ? 'active' : 'progress'); setTechniqueContext(null); return true; }
       if (step === 'programSetup' || step === 'programDetail') { setStep('programs'); return true; }
       if (step === 'workoutDetail') {
@@ -399,7 +402,7 @@ export default function App() {
       {step === 'auth' && <AuthScreen onSubmit={handleAuth} />}
       {step === 'goal' && <GoalScreen onContinue={async goal => {await api.setGoal(access, goal); setStep('profile');}} />}
       {step === 'profile' && <ProfileSetupScreen onContinue={async data => {
-        await api.updateProfile(access, {height_cm: data.height, weight_kg: data.weight, experience_level: data.level, unit_system: 'metric'});
+        await api.updateProfile(access, {height_cm: data.height, weight_kg: data.weight, age_years: data.age, experience_level: data.level, injuries: data.injuries, limitations: data.limitations, unit_system: 'metric'});
         setStep('training');
       }} />}
       {step === 'training' && <TrainingSetupScreen onFinish={async data => {
@@ -407,7 +410,9 @@ export default function App() {
         await api.completeOnboarding(access);
         setStep('home');
       }} />}
-      {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => setStep('devices')} onLogout={logout} />}
+      {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onManualWorkout={() => {setSelectedMuscle(null); setStep('manualWorkout');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => setStep('devices')} onProfile={() => setStep('profileSettings')} />}
+      {step === 'manualWorkout' && <ManualWorkoutScreen accessToken={access} onBack={() => setStep('home')} onCreated={next => {setWorkout(next);setSelectedMuscle(null);setSelectedEnvironment(next.workout.environment);setStep('preview')}} />}
+      {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} />}
       {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next); setStep('preview');}} />}
       {step === 'preview' && workout && <WorkoutPreviewScreen accessToken={access} workout={workout} onBack={() => setStep(selectedMuscle ? 'muscle' : 'home')} onStart={next => {void updateWorkout(next); setStep('active');}} />}
       {step === 'active' && workout && <ActiveWorkoutScreen accessToken={access} workout={workout} onWorkoutChange={next => {void updateWorkout(next);}} onFinish={finishWorkout} onCancel={cancelWorkout} techniquePrefill={techniquePrefill} onTechnique={context => {setTechniqueContext(context); setStep('technique');}} />}

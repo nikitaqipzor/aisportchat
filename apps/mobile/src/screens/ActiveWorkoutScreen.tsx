@@ -70,6 +70,10 @@ export function ActiveWorkoutScreen({
   if (!current) return <View style={styles.emptyState}><Text accessibilityRole="header" style={styles.emptyTitle}>В тренировке нет упражнений</Text><Text style={styles.emptyText}>Вернись назад и создай тренировку ещё раз.</Text><AppButton label="Отменить тренировку" variant="secondary" onPress={() => { void onCancel(); }} /></View>;
 
   async function saveSet() {
+    if (nextSetNumber > current.workout_exercise.target_sets) {
+      setError('Все запланированные подходы упражнения уже выполнены. Перейди к следующему.');
+      return;
+    }
     const repsValue = Number(reps);
     const weightValue = weight.trim() === '' ? undefined : Number(weight);
     const rirValue = rir.trim() === '' ? undefined : Number(rir);
@@ -158,18 +162,17 @@ export function ActiveWorkoutScreen({
   }
 
   function requestFinish() {
-    if (progress.done < progress.target) {
-      Alert.alert(
-        'Завершить раньше?',
-        `Выполнено ${progress.done} из ${progress.target} запланированных подходов. Незавершённые подходы останутся пропущенными.`,
-        [
-          {text: 'Продолжить тренировку', style: 'cancel'},
-          {text: 'Завершить', style: 'destructive', onPress: () => { void finishConfirmed(); }},
-        ],
-      );
-      return;
-    }
-    void finishConfirmed();
+    const early = progress.done < progress.target;
+    Alert.alert(
+      early ? 'Завершить раньше?' : 'Завершить тренировку?',
+      early
+        ? `Выполнено ${progress.done} из ${progress.target} запланированных подходов. Незавершённые подходы останутся пропущенными.`
+        : `Все ${progress.target} подходов выполнены. Сохранить тренировку в истории?`,
+      [
+        {text: early ? 'Продолжить тренировку' : 'Отмена', style: 'cancel'},
+        {text: 'Завершить', onPress: () => { void finishConfirmed(); }},
+      ],
+    );
   }
 
   function requestCancel() {
@@ -249,8 +252,8 @@ export function ActiveWorkoutScreen({
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
         {offlineNotice ? <Text accessibilityRole="alert" style={styles.offline}>{offlineNotice}</Text> : null}
 
-        <Pressable style={[styles.primary, (saving||finishing||cancelling) && styles.disabled]} onPress={()=>void saveSet()} disabled={saving||finishing||cancelling} accessibilityRole="button" accessibilityLabel="Завершить подход" accessibilityState={{disabled:saving||finishing||cancelling,busy:saving}} testID="workout-save-set">
-          {saving ? <ActivityIndicator color={colors.inverse} /> : <Text style={styles.primaryText}>Завершить подход</Text>}
+        <Pressable style={[styles.primary, (saving||finishing||cancelling||nextSetNumber>current.workout_exercise.target_sets) && styles.disabled]} onPress={()=>void saveSet()} disabled={saving||finishing||cancelling||nextSetNumber>current.workout_exercise.target_sets} accessibilityRole="button" accessibilityLabel="Завершить подход" accessibilityState={{disabled:saving||finishing||cancelling||nextSetNumber>current.workout_exercise.target_sets,busy:saving}} testID="workout-save-set">
+          {saving ? <ActivityIndicator color={colors.inverse} /> : <Text style={styles.primaryText}>{nextSetNumber>current.workout_exercise.target_sets?'Все подходы выполнены':'Завершить подход'}</Text>}
         </Pressable>
       </View>
 

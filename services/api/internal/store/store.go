@@ -28,6 +28,9 @@ type Profile struct {
 	HeightCM        *float64  `json:"height_cm,omitempty"`
 	WeightKG        *float64  `json:"weight_kg,omitempty"`
 	ExperienceLevel *string   `json:"experience_level,omitempty"`
+	AgeYears        *int      `json:"age_years,omitempty"`
+	Injuries        []string  `json:"injuries"`
+	Limitations     []string  `json:"limitations"`
 	UnitSystem      string    `json:"unit_system"`
 	UpdatedAt       time.Time `json:"updated_at"`
 }

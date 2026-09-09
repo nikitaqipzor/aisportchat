@@ -11,6 +11,7 @@ import "C"
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -205,23 +206,35 @@ func (p *Postgres) FindUserByID(ctx context.Context, id string) (User, error) {
 }
 
 func (p *Postgres) UpsertProfile(ctx context.Context, in Profile) (Profile, error) {
-	unit := in.UnitSystem
-	if unit == "" {
-		unit = "metric"
+	var unit *string
+	if in.UnitSystem != "" {
+		unit = sp(in.UnitSystem)
+	}
+	var injuries, limitations *string
+	if in.Injuries != nil {
+		encoded, _ := json.Marshal(in.Injuries)
+		injuries = sp(string(encoded))
+	}
+	if in.Limitations != nil {
+		encoded, _ := json.Marshal(in.Limitations)
+		limitations = sp(string(encoded))
 	}
 	rows, err := p.query(ctx, `
-        INSERT INTO user_profiles(user_id,birth_date,gender,height_cm,weight_kg,experience_level,unit_system,updated_at)
-        VALUES($1::uuid,$2::date,$3,$4::numeric,$5::numeric,$6,$7,now())
-        ON CONFLICT(user_id) DO UPDATE SET
+		INSERT INTO user_profiles(user_id,birth_date,gender,height_cm,weight_kg,experience_level,unit_system,age_years,injuries,limitations,updated_at)
+		VALUES($1::uuid,$2::date,$3,$4::numeric,$5::numeric,$6,COALESCE($7,'metric'),$8::smallint,COALESCE($9::jsonb,'[]'::jsonb),COALESCE($10::jsonb,'[]'::jsonb),now())
+		ON CONFLICT(user_id) DO UPDATE SET
           birth_date=COALESCE(EXCLUDED.birth_date,user_profiles.birth_date),
           gender=COALESCE(EXCLUDED.gender,user_profiles.gender),
           height_cm=COALESCE(EXCLUDED.height_cm,user_profiles.height_cm),
           weight_kg=COALESCE(EXCLUDED.weight_kg,user_profiles.weight_kg),
-          experience_level=COALESCE(EXCLUDED.experience_level,user_profiles.experience_level),
-          unit_system=COALESCE(NULLIF(EXCLUDED.unit_system,''),user_profiles.unit_system),
-          updated_at=now()
-        RETURNING user_id::text,birth_date::text,gender,height_cm::text,weight_kg::text,experience_level,unit_system,updated_at::text`,
-		sp(in.UserID), in.BirthDate, in.Gender, fp(in.HeightCM), fp(in.WeightKG), in.ExperienceLevel, sp(unit))
+		  experience_level=COALESCE(EXCLUDED.experience_level,user_profiles.experience_level),
+		  unit_system=COALESCE($7,user_profiles.unit_system),
+		  age_years=COALESCE(EXCLUDED.age_years,user_profiles.age_years),
+		  injuries=COALESCE($9::jsonb,user_profiles.injuries),
+		  limitations=COALESCE($10::jsonb,user_profiles.limitations),
+		  updated_at=now()
+		RETURNING user_id::text,birth_date::text,gender,height_cm::text,weight_kg::text,experience_level,unit_system,updated_at::text,age_years::text,injuries::text,limitations::text`,
+		sp(in.UserID), in.BirthDate, in.Gender, fp(in.HeightCM), fp(in.WeightKG), in.ExperienceLevel, unit, ip(in.AgeYears), injuries, limitations)
 	if err != nil {
 		return Profile{}, err
 	}
@@ -229,12 +242,12 @@ func (p *Postgres) UpsertProfile(ctx context.Context, in Profile) (Profile, erro
 }
 
 func (p *Postgres) GetProfile(ctx context.Context, userID string) (Profile, error) {
-	rows, err := p.query(ctx, `SELECT user_id::text,birth_date::text,gender,height_cm::text,weight_kg::text,experience_level,unit_system,updated_at::text FROM user_profiles WHERE user_id=$1::uuid`, sp(userID))
+	rows, err := p.query(ctx, `SELECT user_id::text,birth_date::text,gender,height_cm::text,weight_kg::text,experience_level,unit_system,updated_at::text,age_years::text,injuries::text,limitations::text FROM user_profiles WHERE user_id=$1::uuid`, sp(userID))
 	if err != nil {
 		return Profile{}, err
 	}
 	if len(rows) == 0 {
-		return Profile{UserID: userID, UnitSystem: "metric"}, nil
+		return Profile{UserID: userID, UnitSystem: "metric", Injuries: []string{}, Limitations: []string{}}, nil
 	}
 	return scanProfile(rows[0])
 }
@@ -507,7 +520,7 @@ func (p *Postgres) CancelWorkout(ctx context.Context, userID, workoutID string) 
 }
 
 func (p *Postgres) ListWorkouts(ctx context.Context, userID string, limit int) ([]WorkoutDetails, error) {
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > 500 {
 		limit = 20
 	}
 	rows, err := p.query(ctx, `SELECT id::text FROM workouts WHERE user_id=$1::uuid ORDER BY created_at DESC LIMIT $2::int`, sp(userID), sp(strconv.Itoa(limit)))
@@ -776,7 +789,10 @@ func scanUser(r []*string) (User, error) {
 }
 func scanProfile(r []*string) (Profile, error) {
 	t, _ := parseTime(val(r, 7))
-	return Profile{UserID: val(r, 0), BirthDate: r[1], Gender: r[2], HeightCM: parseFloatPtr(r[3]), WeightKG: parseFloatPtr(r[4]), ExperienceLevel: r[5], UnitSystem: val(r, 6), UpdatedAt: t}, nil
+	var injuries, limitations []string
+	_ = json.Unmarshal([]byte(defaultString(val(r, 9), "[]")), &injuries)
+	_ = json.Unmarshal([]byte(defaultString(val(r, 10), "[]")), &limitations)
+	return Profile{UserID: val(r, 0), BirthDate: r[1], Gender: r[2], HeightCM: parseFloatPtr(r[3]), WeightKG: parseFloatPtr(r[4]), ExperienceLevel: r[5], UnitSystem: val(r, 6), UpdatedAt: t, AgeYears: parseIntPtr(r[8]), Injuries: injuries, Limitations: limitations}, nil
 }
 func scanGoal(r []*string) (Goal, error) {
 	t, _ := parseTime(val(r, 3))
@@ -838,6 +854,13 @@ func scanWorkoutSet(r []*string) (WorkoutSet, error) {
 }
 
 func sp(v string) *string { return &v }
+func ip(v *int) *string {
+	if v == nil {
+		return nil
+	}
+	s := strconv.Itoa(*v)
+	return &s
+}
 func fp(v *float64) *string {
 	if v == nil {
 		return nil

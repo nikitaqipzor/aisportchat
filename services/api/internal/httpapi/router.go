@@ -89,6 +89,7 @@ func NewServerWithAIAndMedia(st store.Store, tm *auth.TokenManager, aiProvider a
 	mux.HandleFunc("GET /api/v1/muscles", s.listMuscles)
 	mux.Handle("GET /api/v1/muscles/{muscle_id}/stats", s.requireAuth(http.HandlerFunc(s.muscleStats)))
 	mux.HandleFunc("GET /api/v1/equipment", s.listEquipment)
+	mux.Handle("GET /api/v1/exercises", s.requireAuth(http.HandlerFunc(s.listExercises)))
 
 	mux.Handle("GET /api/v1/profile", s.requireAuth(http.HandlerFunc(s.getProfile)))
 	mux.Handle("PATCH /api/v1/profile", s.requireAuth(http.HandlerFunc(s.updateProfile)))
@@ -107,7 +108,9 @@ func NewServerWithAIAndMedia(st store.Store, tm *auth.TokenManager, aiProvider a
 	mux.Handle("GET /api/v1/health/insights", s.requireAuth(http.HandlerFunc(s.healthInsights)))
 
 	mux.Handle("POST /api/v1/workouts/generate", s.requireAuth(http.HandlerFunc(s.generateWorkout)))
+	mux.Handle("POST /api/v1/workouts/manual", s.requireAuth(http.HandlerFunc(s.createManualWorkout)))
 	mux.Handle("GET /api/v1/workouts/history", s.requireAuth(http.HandlerFunc(s.workoutHistory)))
+	mux.Handle("GET /api/v1/workouts/progress-summary", s.requireAuth(http.HandlerFunc(s.workoutProgressSummary)))
 	mux.Handle("GET /api/v1/records", s.requireAuth(http.HandlerFunc(s.personalRecords)))
 	mux.Handle("GET /api/v1/workouts/active", s.requireAuth(http.HandlerFunc(s.activeWorkout)))
 	mux.Handle("GET /api/v1/workouts/{workout_id}", s.requireAuth(http.HandlerFunc(s.getWorkout)))
@@ -262,9 +265,42 @@ func (s *Server) listEquipment(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": catalog.Equipment})
 }
 
+func (s *Server) listExercises(w http.ResponseWriter, r *http.Request) {
+	muscle := strings.TrimSpace(r.URL.Query().Get("muscle"))
+	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+	query := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("query")))
+	items := make([]model.Exercise, 0, len(catalog.Exercises))
+	for _, item := range catalog.Exercises {
+		if muscle != "" && item.PrimaryMuscle != muscle {
+			continue
+		}
+		if environment != "" && !containsString(item.Environment, environment) {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(item.Name), query) {
+			continue
+		}
+		items = append(items, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) getProfile(w http.ResponseWriter, r *http.Request) {
 	userID := currentUserID(r.Context())
-	p, _ := s.store.GetProfile(r.Context(), userID)
+	p, err := s.store.GetProfile(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "profile lookup failed")
+		return
+	}
 	goal, goalErr := s.store.GetGoal(r.Context(), userID)
 	prefs, prefsErr := s.store.GetTrainingPreferences(r.Context(), userID)
 	payload := map[string]any{"profile": p}
@@ -295,6 +331,18 @@ func (s *Server) updateProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 422, err.Error())
 			return
 		}
+	}
+	if in.AgeYears != nil && (*in.AgeYears < 14 || *in.AgeYears > 100) {
+		writeError(w, 422, "age_years must be between 14 and 100")
+		return
+	}
+	if err := profile.ValidateNotes("injuries", in.Injuries); err != nil {
+		writeError(w, 422, err.Error())
+		return
+	}
+	if err := profile.ValidateNotes("limitations", in.Limitations); err != nil {
+		writeError(w, 422, err.Error())
+		return
 	}
 	if in.UnitSystem != "" && in.UnitSystem != "metric" && in.UnitSystem != "imperial" {
 		writeError(w, 422, "unit_system must be metric or imperial")
@@ -403,6 +451,19 @@ func (s *Server) generateWorkout(w http.ResponseWriter, r *http.Request) {
 	} else {
 		out, err = s.workoutService.Generate(r.Context(), userID, in)
 	}
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, out)
+}
+
+func (s *Server) createManualWorkout(w http.ResponseWriter, r *http.Request) {
+	var in workouts.ManualWorkoutInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	out, err := s.workoutService.CreateManual(r.Context(), currentUserID(r.Context()), in)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -538,6 +599,21 @@ func (s *Server) workoutHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+}
+
+func (s *Server) workoutProgressSummary(w http.ResponseWriter, r *http.Request) {
+	days := 28
+	if raw := r.URL.Query().Get("days"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			days = parsed
+		}
+	}
+	out, err := s.workoutService.ProgressSummary(r.Context(), currentUserID(r.Context()), days, time.Now())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) personalRecords(w http.ResponseWriter, r *http.Request) {
