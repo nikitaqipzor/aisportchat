@@ -14,6 +14,7 @@ Restore the Android debug CI job with an internally consistent stable toolchain 
 - `react-native-safe-area-context` is pinned to 5.9.1; unlike 5.5.2, this release no longer calls the removed `UIManagerModule.uiImplementation` API and therefore compiles with React Native 0.87.
 - Native modules now obtain the foreground activity through `reactApplicationContext.currentActivity`, the React Native 0.87-compatible accessor.
 - Technique framing converts its primitive landmark index array with `map(...).filterNotNull()`, avoiding the unavailable `IntArray.mapNotNull` overload while preserving visibility filtering.
+- Food-photo decoding uses the non-deprecated `InputStream.readBytes()` overload required by the Kotlin 2.2 warnings-as-errors policy; the existing 5 MB validation remains unchanged.
 
 ## Rationale
 

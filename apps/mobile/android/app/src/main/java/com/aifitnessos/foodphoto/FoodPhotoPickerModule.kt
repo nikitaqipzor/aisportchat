@@ -62,7 +62,7 @@ class FoodPhotoPickerModule(reactContext: ReactApplicationContext) : NativeFoodP
         val mime = resolver.getType(uri)?.takeIf { it.startsWith("image/") } ?: "image/jpeg"
         val input = resolver.openInputStream(uri) ?: error("Unable to open selected image")
         val bytes = input.use { stream ->
-            val data = stream.readBytes(MAX_BYTES + 1)
+            val data = stream.readBytes()
             if (data.size > MAX_BYTES) error("Image exceeds 5 MB limit")
             data
         }
