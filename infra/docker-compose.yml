@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: fitness
+      POSTGRES_USER: fitness
+      POSTGRES_PASSWORD: fitness
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fitness -d fitness"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: postgres:18-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: fitness
+      PGHOST: postgres
+      PGPORT: 5432
+      PGUSER: fitness
+      PGDATABASE: fitness
+    volumes:
+      - ../services/api/migrations:/migrations:ro
+    entrypoint: ["/bin/sh", "/migrations/run.sh"]
+
+  api:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+    environment:
+      API_PORT: 8080
+      STORE_BACKEND: postgres
+      DATABASE_URL: postgres://fitness:fitness@postgres:5432/fitness?sslmode=disable
+      REDIS_ADDR: redis:6379
+      APP_ENV: development
+      AUTH_TOKEN_SECRET: local-dev-secret-change-before-production-123456
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-terra}
+      MEDIA_ROOT: /data/media
+    ports:
+      - "8080:8080"
+    volumes:
+      - media_data:/data/media
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:

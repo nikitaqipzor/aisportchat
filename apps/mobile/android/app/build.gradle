@@ -1,0 +1,114 @@
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+react {
+    autolinkLibrariesWithApp()
+}
+
+def enableProguardInReleaseBuilds = false
+def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
+def configuredApiBaseUrl = (project.findProperty("AI_FITNESS_API_BASE_URL") ?: System.getenv("AI_FITNESS_API_BASE_URL") ?: "").toString()
+def escapedApiBaseUrl = configuredApiBaseUrl.replace("\\", "\\\\").replace('"', '\\"')
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "com.aifitnessos"
+
+    defaultConfig {
+        applicationId "com.aifitnessos"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 5
+        versionName "0.14.0"
+        buildConfigField "String", "API_BASE_URL", "\"${escapedApiBaseUrl}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+        release {
+            def storePath = project.findProperty("AI_FITNESS_UPLOAD_STORE_FILE") ?: System.getenv("AI_FITNESS_UPLOAD_STORE_FILE")
+            if (storePath) {
+                storeFile file(storePath)
+                storePassword project.findProperty("AI_FITNESS_UPLOAD_STORE_PASSWORD") ?: System.getenv("AI_FITNESS_UPLOAD_STORE_PASSWORD")
+                keyAlias project.findProperty("AI_FITNESS_UPLOAD_KEY_ALIAS") ?: System.getenv("AI_FITNESS_UPLOAD_KEY_ALIAS")
+                keyPassword project.findProperty("AI_FITNESS_UPLOAD_KEY_PASSWORD") ?: System.getenv("AI_FITNESS_UPLOAD_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+            manifestPlaceholders = [usesCleartextTraffic: "true"]
+        }
+        release {
+            if (signingConfigs.release.storeFile != null) {
+                signingConfig signingConfigs.release
+            }
+            minifyEnabled enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            manifestPlaceholders = [usesCleartextTraffic: "false"]
+        }
+    }
+
+    androidResources {
+        noCompress "task", "tflite"
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ["META-INF/DEPENDENCIES", "META-INF/LICENSE*", "META-INF/NOTICE*"]
+        }
+    }
+}
+
+dependencies {
+    implementation("com.facebook.react:react-android")
+    implementation("com.google.mediapipe:tasks-vision:0.10.29")
+    implementation("androidx.camera:camera-core:1.5.3")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.health.connect:connect-client:1.1.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+}
+
+
+def poseModelUrl = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+def poseModelFile = file("src/main/assets/pose_landmarker_lite.task")
+
+tasks.register("fetchPoseLandmarkerModel") {
+    outputs.file(poseModelFile)
+    doLast {
+        if (!poseModelFile.exists() || poseModelFile.length() < 1024) {
+            poseModelFile.parentFile.mkdirs()
+            logger.lifecycle("Downloading MediaPipe Pose Landmarker model...")
+            new URL(poseModelUrl).withInputStream { input ->
+                poseModelFile.withOutputStream { output -> output << input }
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure { dependsOn("fetchPoseLandmarkerModel") }

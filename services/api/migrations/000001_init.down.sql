@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS workout_sets;
+DROP TABLE IF EXISTS workout_exercises;
+DROP TABLE IF EXISTS workouts;
+DROP TABLE IF EXISTS exercise_environments;
+DROP TABLE IF EXISTS exercise_equipment;
+DROP TABLE IF EXISTS exercise_muscles;
+DROP TABLE IF EXISTS exercises;
+DROP TABLE IF EXISTS equipment;
+DROP TABLE IF EXISTS muscles;
+DROP TABLE IF EXISTS user_profiles;
+DROP TABLE IF EXISTS users;

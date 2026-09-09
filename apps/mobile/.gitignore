@@ -1,0 +1,27 @@
+# JavaScript
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Metro
+.metro-health-check*
+
+# Android local/build state
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+*.iml
+
+# Production signing material (debug.keystore is intentionally committed)
+android/*.jks
+android/*.keystore
+!android/app/debug.keystore
+android/release-signing.properties
+
+# OS/editor
+.DS_Store
+
+# Downloaded during Android preBuild; URL/version is pinned in app/build.gradle.
+android/app/src/main/assets/pose_landmarker_lite.task
