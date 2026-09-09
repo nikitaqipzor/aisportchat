@@ -119,6 +119,15 @@ func (m *Memory) UpsertProfile(_ context.Context, p Profile) (Profile, error) {
 	if p.ExperienceLevel != nil {
 		current.ExperienceLevel = p.ExperienceLevel
 	}
+	if p.AgeYears != nil {
+		current.AgeYears = p.AgeYears
+	}
+	if p.Injuries != nil {
+		current.Injuries = append([]string(nil), p.Injuries...)
+	}
+	if p.Limitations != nil {
+		current.Limitations = append([]string(nil), p.Limitations...)
+	}
 	if p.UnitSystem != "" {
 		current.UnitSystem = p.UnitSystem
 	}
@@ -136,8 +145,10 @@ func (m *Memory) GetProfile(_ context.Context, userID string) (Profile, error) {
 	defer m.mu.RUnlock()
 	p, ok := m.profiles[userID]
 	if !ok {
-		return Profile{UserID: userID, UnitSystem: "metric"}, nil
+		return Profile{UserID: userID, UnitSystem: "metric", Injuries: []string{}, Limitations: []string{}}, nil
 	}
+	p.Injuries = append([]string(nil), p.Injuries...)
+	p.Limitations = append([]string(nil), p.Limitations...)
 	return p, nil
 }
 
@@ -472,7 +483,7 @@ func (m *Memory) CancelWorkout(_ context.Context, userID, workoutID string) (Wor
 func (m *Memory) ListWorkouts(_ context.Context, userID string, limit int) ([]WorkoutDetails, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if limit <= 0 || limit > 100 {
+	if limit <= 0 || limit > 500 {
 		limit = 20
 	}
 	items := make([]Workout, 0)

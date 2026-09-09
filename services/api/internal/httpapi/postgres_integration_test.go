@@ -35,6 +35,24 @@ func TestPostgresCriticalReleaseFlow(t *testing.T) {
 	suffix := time.Now().UTC().UnixNano()
 	access := registerAndOnboard(t, h, fmt.Sprintf("pg-release-%d@example.com", suffix))
 
+	// Profile PATCH must preserve omitted fields while still allowing explicit
+	// empty arrays to clear private health notes.
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/profile", map[string]any{
+		"unit_system": "imperial", "injuries": []string{"shoulder"}, "limitations": []string{"no flyes"},
+	}, access); rr.Code != http.StatusOK {
+		t.Fatalf("postgres profile seed=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/profile", map[string]any{"weight_kg": 88}, access); rr.Code != http.StatusOK {
+		t.Fatalf("postgres profile partial patch=%d body=%s", rr.Code, rr.Body.String())
+	}
+	profile := doJSON(t, h, http.MethodGet, "/api/v1/profile", nil, access)
+	if profile.Code != http.StatusOK || !bytes.Contains(profile.Body.Bytes(), []byte(`"unit_system":"imperial"`)) || !bytes.Contains(profile.Body.Bytes(), []byte(`"injuries":["shoulder"]`)) || !bytes.Contains(profile.Body.Bytes(), []byte(`"limitations":["no flyes"]`)) {
+		t.Fatalf("postgres profile patch lost omitted fields status=%d body=%s", profile.Code, profile.Body.String())
+	}
+	if rr := doJSON(t, h, http.MethodPatch, "/api/v1/profile", map[string]any{"injuries": []string{}, "limitations": []string{}}, access); rr.Code != http.StatusOK || !bytes.Contains(rr.Body.Bytes(), []byte(`"injuries":[]`)) || !bytes.Contains(rr.Body.Bytes(), []byte(`"limitations":[]`)) {
+		t.Fatalf("postgres profile explicit clear=%d body=%s", rr.Code, rr.Body.String())
+	}
+
 	// Workout persistence: generate -> start -> log -> finish -> history.
 	generated := doJSON(t, h, http.MethodPost, "/api/v1/workouts/generate", map[string]any{
 		"muscle": "chest", "environment": "gym", "duration_minutes": 45,

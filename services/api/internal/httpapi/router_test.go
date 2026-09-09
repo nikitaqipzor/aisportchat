@@ -50,9 +50,14 @@ func TestRegistrationAndOnboardingFlow(t *testing.T) {
 
 	profile := doJSON(t, h, http.MethodPatch, "/api/v1/profile", map[string]any{
 		"height_cm": 193, "weight_kg": 97, "experience_level": "intermediate", "unit_system": "metric",
+		"age_years": 30, "injuries": []string{"Операция на плече"}, "limitations": []string{"Без болезненных разведений"},
 	}, access)
 	if profile.Code != http.StatusOK {
 		t.Fatalf("profile status=%d body=%s", profile.Code, profile.Body.String())
+	}
+	loaded := doJSON(t, h, http.MethodGet, "/api/v1/profile", nil, access)
+	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), "Операция на плече") || !strings.Contains(loaded.Body.String(), `"age_years":30`) {
+		t.Fatalf("profile did not round-trip athlete details: status=%d body=%s", loaded.Code, loaded.Body.String())
 	}
 
 	prefs := doJSON(t, h, http.MethodPut, "/api/v1/profile/training-preferences", map[string]any{
@@ -87,6 +92,28 @@ func TestRegistrationAndOnboardingFlow(t *testing.T) {
 	reused := doJSON(t, h, http.MethodPost, "/api/v1/auth/refresh", map[string]any{"refresh_token": authBody.Tokens.RefreshToken}, "")
 	if reused.Code != http.StatusUnauthorized {
 		t.Fatalf("expected rotated token to be rejected, got=%d", reused.Code)
+	}
+}
+
+func TestAthleteProfileValidation(t *testing.T) {
+	st := store.NewMemory()
+	tm := auth.NewTokenManager("test-secret", 15*time.Minute, 24*time.Hour)
+	h := NewServerWithDependencies(st, tm)
+	register := doJSON(t, h, http.MethodPost, "/api/v1/auth/register", map[string]any{"email": "profile-validation@example.com", "password": "strong-pass-123"}, "")
+	var authBody struct {
+		Tokens auth.Tokens `json:"tokens"`
+	}
+	if err := json.Unmarshal(register.Body.Bytes(), &authBody); err != nil {
+		t.Fatal(err)
+	}
+
+	badAge := doJSON(t, h, http.MethodPatch, "/api/v1/profile", map[string]any{"age_years": 10}, authBody.Tokens.AccessToken)
+	if badAge.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad age status=%d body=%s", badAge.Code, badAge.Body.String())
+	}
+	badNote := doJSON(t, h, http.MethodPatch, "/api/v1/profile", map[string]any{"injuries": []string{""}}, authBody.Tokens.AccessToken)
+	if badNote.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("bad injury status=%d body=%s", badNote.Code, badNote.Body.String())
 	}
 }
 

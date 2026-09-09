@@ -13,19 +13,24 @@ function parseNumber(value: string) {
   return Number(value.replace(',', '.'));
 }
 
-export function ProfileSetupScreen({onContinue}: {onContinue: (data: {height: number; weight: number; level: string}) => Promise<void>}) {
+export function ProfileSetupScreen({onContinue}: {onContinue: (data: {height: number; weight: number; age: number; level: string; injuries: string[]; limitations: string[]}) => Promise<void>}) {
   const {width: viewportWidth} = useWindowDimensions();
   const weightRef = useRef<TextInputInstance>(null);
   const [height, setHeight] = useState('');
   const [weight, setWeight] = useState('');
+  const [age, setAge] = useState('');
+  const [injuries, setInjuries] = useState('');
+  const [limitations, setLimitations] = useState('');
   const [level, setLevel] = useState<(typeof levels)[number][0]>('beginner');
   const [heightTouched, setHeightTouched] = useState(false);
   const [weightTouched, setWeightTouched] = useState(false);
+  const [ageTouched, setAgeTouched] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const heightNumber = parseNumber(height);
   const weightNumber = parseNumber(weight);
+  const ageNumber = Number(age);
   const heightError = !height.trim()
     ? 'Укажите рост'
     : !Number.isInteger(heightNumber) || heightNumber < 100 || heightNumber > 250
@@ -33,21 +38,23 @@ export function ProfileSetupScreen({onContinue}: {onContinue: (data: {height: nu
       : '';
   const weightError = !weight.trim()
     ? 'Укажите вес'
-    : !Number.isFinite(weightNumber) || weightNumber < 30 || weightNumber > 350
-      ? 'Допустимый вес: от 30 до 350 кг'
+    : !Number.isFinite(weightNumber) || weightNumber < 30 || weightNumber > 400
+      ? 'Допустимый вес: от 30 до 400 кг'
       : '';
-  const valid = !heightError && !weightError;
+  const ageError = !age.trim() ? 'Укажите возраст' : !Number.isInteger(ageNumber) || ageNumber < 14 || ageNumber > 100 ? 'Допустимый возраст: от 14 до 100 лет' : '';
+  const valid = !heightError && !weightError && !ageError;
 
   async function submit() {
     setHeightTouched(true);
     setWeightTouched(true);
+    setAgeTouched(true);
     if (!valid || loading) {
       return;
     }
     try {
       setLoading(true);
       setError('');
-      await onContinue({height: heightNumber, weight: weightNumber, level});
+      await onContinue({height: heightNumber, weight: weightNumber, age: ageNumber, level, injuries: splitLines(injuries), limitations: splitLines(limitations)});
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось сохранить профиль. Попробуйте ещё раз.');
     } finally {
@@ -95,7 +102,7 @@ export function ProfileSetupScreen({onContinue}: {onContinue: (data: {height: nu
             <TextInput
               ref={weightRef}
               accessibilityLabelledBy="profile-weight-label"
-              accessibilityHint="От 30 до 350 килограммов"
+              accessibilityHint="От 30 до 400 килограммов"
               testID="profile-weight"
               keyboardType="decimal-pad"
               returnKeyType="done"
@@ -114,6 +121,12 @@ export function ProfileSetupScreen({onContinue}: {onContinue: (data: {height: nu
             />
             {weightTouched && weightError ? <Text accessibilityRole="alert" style={styles.fieldError}>{weightError}</Text> : null}
           </View>
+        </View>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>Возраст</Text>
+          <TextInput accessibilityLabel="Возраст" accessibilityHint="От 14 до 100 лет" testID="profile-age" keyboardType="number-pad" value={age} editable={!loading} maxLength={3} onBlur={() => setAgeTouched(true)} onChangeText={value => {setAge(value);setError('');}} style={[styles.input, ageTouched && ageError ? styles.inputError : null]} placeholder="Например, 30" placeholderTextColor={colors.textMuted}/>
+          {ageTouched && ageError ? <Text accessibilityRole="alert" style={styles.fieldError}>{ageError}</Text> : null}
         </View>
 
         <Text style={styles.section}>Опыт тренировок</Text>
@@ -140,6 +153,10 @@ export function ProfileSetupScreen({onContinue}: {onContinue: (data: {height: nu
             );
           })}
         </View>
+        <Text style={styles.section}>Травмы и ограничения</Text>
+        <Text style={styles.cardDescription}>Необязательно. Каждый пункт — с новой строки. Это не заменяет консультацию врача.</Text>
+        <TextInput accessibilityLabel="Травмы" value={injuries} onChangeText={setInjuries} editable={!loading} multiline maxLength={1000} style={styles.notes} placeholder="Например: операция на правом плече" placeholderTextColor={colors.textMuted}/>
+        <TextInput accessibilityLabel="Ограничения движений" value={limitations} onChangeText={setLimitations} editable={!loading} multiline maxLength={1000} style={styles.notes} placeholder="Например: исключить болезненные разведения" placeholderTextColor={colors.textMuted}/>
       </View>
 
       <View style={styles.footer}>
@@ -200,6 +217,11 @@ const styles = StyleSheet.create({
   cardDescription: {fontSize: 12, lineHeight: 17, color: colors.textMuted, marginTop: 3},
   selectedDescription: {color: colors.inverse, opacity: 0.76},
   pressed: {opacity: 0.72},
+  notes: {minHeight: 78, textAlignVertical: 'top', borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 12, color: colors.text, backgroundColor: colors.surface, marginTop: spacing.sm},
   footer: {width: '100%', maxWidth: 600, alignSelf: 'center', marginTop: 'auto', paddingTop: spacing.lg},
   error: {color: colors.danger, fontWeight: '700', lineHeight: 20, marginBottom: spacing.sm},
 });
+
+function splitLines(value: string) {
+  return value.split('\n').map(item => item.trim()).filter(Boolean);
+}

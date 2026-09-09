@@ -43,6 +43,21 @@ type ReplaceInput struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+type ManualExerciseInput struct {
+	ExerciseID   string   `json:"exercise_id"`
+	TargetSets   int      `json:"target_sets"`
+	TargetReps   int      `json:"target_reps"`
+	TargetWeight *float64 `json:"target_weight,omitempty"`
+	RestSeconds  int      `json:"rest_seconds"`
+}
+
+type ManualWorkoutInput struct {
+	Muscle          string                `json:"muscle"`
+	Environment     string                `json:"environment"`
+	DurationMinutes int                   `json:"duration_minutes"`
+	Exercises       []ManualExerciseInput `json:"exercises"`
+}
+
 type FinishResult struct {
 	Workout             WorkoutView                 `json:"workout"`
 	NextRecommendations []ProgressionRecommendation `json:"next_recommendations"`
@@ -77,12 +92,64 @@ type MuscleStats struct {
 	PersonalRecordsCount int        `json:"personal_records_count"`
 }
 
+type ExerciseBest struct {
+	ExerciseID   string   `json:"exercise_id"`
+	ExerciseName string   `json:"exercise_name"`
+	MaxWeight    *float64 `json:"max_weight,omitempty"`
+	MaxReps      int      `json:"max_reps"`
+}
+
+type ProgressSummary struct {
+	PeriodDays          int            `json:"period_days"`
+	CompletedWorkouts   int            `json:"completed_workouts"`
+	TrainingDays        int            `json:"training_days"`
+	WorkoutsPerWeek     float64        `json:"workouts_per_week"`
+	TotalSets           int            `json:"total_sets"`
+	TotalVolume         float64        `json:"total_volume"`
+	RecentVolume7D      float64        `json:"recent_volume_7d"`
+	PreviousVolume7D    float64        `json:"previous_volume_7d"`
+	WeeklyStreak        int            `json:"weekly_streak"`
+	PersonalRecordCount int            `json:"personal_record_count"`
+	ExerciseBests       []ExerciseBest `json:"exercise_bests"`
+}
+
 func NewService(st store.Store, engine *Engine) *Service {
 	return &Service{store: st, engine: engine}
 }
 
 func (s *Service) Generate(ctx context.Context, userID string, in GenerateInput) (WorkoutView, error) {
 	return s.generate(ctx, userID, in, 1, 1)
+}
+
+// CreateManual persists user-selected workout facts. It deliberately validates
+// against the deterministic catalog; an AI provider is never involved.
+func (s *Service) CreateManual(ctx context.Context, userID string, in ManualWorkoutInput) (WorkoutView, error) {
+	status, err := s.store.GetOnboardingStatus(ctx, userID)
+	if err != nil || !status.Completed {
+		return WorkoutView{}, errors.New("complete onboarding before creating a workout")
+	}
+	prefs, err := s.store.GetTrainingPreferences(ctx, userID)
+	if err != nil || !contains(prefs.Environments, in.Environment) {
+		return WorkoutView{}, errors.New("selected environment is not enabled in the user profile")
+	}
+	if !validMuscle(in.Muscle) || in.DurationMinutes < 10 || in.DurationMinutes > 180 || len(in.Exercises) < 1 || len(in.Exercises) > 20 {
+		return WorkoutView{}, errors.New("invalid manual workout")
+	}
+	seen := map[string]bool{}
+	rows := make([]store.WorkoutExercise, 0, len(in.Exercises))
+	for _, item := range in.Exercises {
+		ex, ok := catalog.ExerciseByID(item.ExerciseID)
+		if !ok || seen[item.ExerciseID] || !contains(ex.Environment, in.Environment) || item.TargetSets < 1 || item.TargetSets > 10 || item.TargetReps < 1 || item.TargetReps > 200 || item.RestSeconds < 0 || item.RestSeconds > 600 || item.TargetWeight != nil && (*item.TargetWeight < 0 || *item.TargetWeight > 1000) {
+			return WorkoutView{}, errors.New("invalid manual exercise")
+		}
+		seen[item.ExerciseID] = true
+		rows = append(rows, store.WorkoutExercise{ExerciseID: ex.ID, TargetSets: item.TargetSets, TargetRepsMin: item.TargetReps, TargetRepsMax: item.TargetReps, TargetWeight: cloneFloat(item.TargetWeight), RestSeconds: item.RestSeconds, ProgressionNote: "Задано вручную"})
+	}
+	details, err := s.store.CreateWorkout(ctx, store.Workout{UserID: userID, Muscle: in.Muscle, Environment: in.Environment, Status: "planned", DurationMinutes: in.DurationMinutes}, rows)
+	if err != nil {
+		return WorkoutView{}, err
+	}
+	return s.view(ctx, userID, details)
 }
 
 // GenerateAdapted is used by the deterministic Program Engine. Multipliers are
@@ -444,6 +511,117 @@ func (s *Service) MuscleStats(ctx context.Context, userID, muscle string) (Muscl
 
 func (s *Service) Records(ctx context.Context, userID string, limit int) ([]store.PersonalRecord, error) {
 	return s.store.ListPersonalRecords(ctx, userID, limit)
+}
+
+func (s *Service) ProgressSummary(ctx context.Context, userID string, days int, now time.Time) (ProgressSummary, error) {
+	if days < 7 || days > 90 {
+		days = 28
+	}
+	details, err := s.store.ListWorkouts(ctx, userID, 500)
+	if err != nil {
+		return ProgressSummary{}, err
+	}
+	items := make([]WorkoutView, 0, len(details))
+	for _, item := range details {
+		if item.Workout.Status != "completed" {
+			continue
+		}
+		view, err := s.view(ctx, userID, item)
+		if err != nil {
+			return ProgressSummary{}, err
+		}
+		items = append(items, view)
+	}
+	records, err := s.store.ListPersonalRecords(ctx, userID, 200)
+	if err != nil {
+		return ProgressSummary{}, err
+	}
+	return calculateProgressSummary(items, records, days, now), nil
+}
+
+func calculateProgressSummary(items []WorkoutView, records []store.PersonalRecord, days int, now time.Time) ProgressSummary {
+	now = now.UTC()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	periodStart := todayStart.AddDate(0, 0, -(days - 1))
+	recentStart := todayStart.AddDate(0, 0, -6)
+	previousStart := todayStart.AddDate(0, 0, -13)
+	trainingDays := map[string]bool{}
+	trainingWeeks := map[string]bool{}
+	bests := map[string]ExerciseBest{}
+	out := ProgressSummary{PeriodDays: days, ExerciseBests: []ExerciseBest{}}
+	for _, item := range items {
+		when := item.Workout.CompletedAt
+		if when == nil {
+			when = &item.Workout.CreatedAt
+		}
+		if when.After(now) || when.Before(periodStart) {
+			continue
+		}
+		if !when.Before(recentStart) {
+			out.RecentVolume7D += item.Workout.TotalVolume
+		} else if !when.Before(previousStart) {
+			out.PreviousVolume7D += item.Workout.TotalVolume
+		}
+		if when.Before(periodStart) {
+			continue
+		}
+		out.CompletedWorkouts++
+		out.TotalVolume += item.Workout.TotalVolume
+		trainingDays[when.Format("2006-01-02")] = true
+		year, week := when.ISOWeek()
+		trainingWeeks[fmt.Sprintf("%04d-%02d", year, week)] = true
+		for _, exercise := range item.Exercises {
+			best := bests[exercise.Exercise.ID]
+			best.ExerciseID, best.ExerciseName = exercise.Exercise.ID, exercise.Exercise.Name
+			for _, set := range exercise.Sets {
+				out.TotalSets++
+				if set.Repetitions > best.MaxReps {
+					best.MaxReps = set.Repetitions
+				}
+				if set.Weight != nil && (best.MaxWeight == nil || *set.Weight > *best.MaxWeight) {
+					value := *set.Weight
+					best.MaxWeight = &value
+				}
+			}
+			bests[exercise.Exercise.ID] = best
+		}
+	}
+	out.TrainingDays = len(trainingDays)
+	out.WorkoutsPerWeek = math.Round((float64(out.CompletedWorkouts)/(float64(days)/7))*10) / 10
+	for _, record := range records {
+		if !record.AchievedAt.Before(periodStart) && !record.AchievedAt.After(now) {
+			out.PersonalRecordCount++
+		}
+	}
+	for _, best := range bests {
+		out.ExerciseBests = append(out.ExerciseBests, best)
+	}
+	sort.Slice(out.ExerciseBests, func(i, j int) bool { return out.ExerciseBests[i].ExerciseName < out.ExerciseBests[j].ExerciseName })
+	if len(out.ExerciseBests) > 5 {
+		out.ExerciseBests = out.ExerciseBests[:5]
+	}
+	weekCursor := startOfISOWeek(now)
+	if !trainingWeeks[isoWeekKey(weekCursor)] {
+		weekCursor = weekCursor.AddDate(0, 0, -7)
+	}
+	for trainingWeeks[isoWeekKey(weekCursor)] {
+		out.WeeklyStreak++
+		weekCursor = weekCursor.AddDate(0, 0, -7)
+	}
+	return out
+}
+
+func startOfISOWeek(value time.Time) time.Time {
+	day := int(value.Weekday())
+	if day == 0 {
+		day = 7
+	}
+	return time.Date(value.Year(), value.Month(), value.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -(day - 1))
+}
+
+func isoWeekKey(value time.Time) string {
+	year, week := value.ISOWeek()
+	return fmt.Sprintf("%04d-%02d", year, week)
 }
 
 func (s *Service) progressionTarget(ctx context.Context, userID string, ex model.Exercise, repMin, repMax int) (*float64, string) {

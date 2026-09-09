@@ -2,12 +2,51 @@ package workouts
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/example/ai-fitness-os/services/api/internal/catalog"
+	"github.com/example/ai-fitness-os/services/api/internal/model"
 	"github.com/example/ai-fitness-os/services/api/internal/store"
 )
+
+func TestCalculateProgressSummaryUsesCompletedFacts(t *testing.T) {
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	weight80, weight90 := 80.0, 90.0
+	makeView := func(id string, completed time.Time, volume float64, weight *float64, reps int) WorkoutView {
+		return WorkoutView{
+			Workout: store.Workout{ID: id, Status: "completed", CompletedAt: &completed, CreatedAt: completed, TotalVolume: volume},
+			Exercises: []ExerciseView{{Exercise: model.Exercise{ID: "bench-press", Name: "Жим лёжа"}, Sets: []store.WorkoutSet{{ID: id + "-set", Weight: weight, Repetitions: reps}}}},
+		}
+	}
+	items := []WorkoutView{
+		makeView("w1", now.AddDate(0, 0, -1), 900, &weight90, 6),
+		makeView("w2", now.AddDate(0, 0, -8), 800, &weight80, 10),
+	}
+	records := []store.PersonalRecord{{ID: "pr", AchievedAt: now.AddDate(0, 0, -1)}}
+	got := calculateProgressSummary(items, records, 28, now)
+	if got.CompletedWorkouts != 2 || got.TrainingDays != 2 || got.TotalSets != 2 || got.TotalVolume != 1700 {
+		t.Fatalf("summary=%+v", got)
+	}
+	if got.RecentVolume7D != 900 || got.PreviousVolume7D != 800 || got.WeeklyStreak != 2 || got.PersonalRecordCount != 1 {
+		t.Fatalf("period metrics=%+v", got)
+	}
+	if len(got.ExerciseBests) != 1 || got.ExerciseBests[0].MaxWeight == nil || *got.ExerciseBests[0].MaxWeight != 90 || got.ExerciseBests[0].MaxReps != 10 {
+		t.Fatalf("bests=%+v", got.ExerciseBests)
+	}
+}
+
+func TestCalculateProgressSummaryIncludesWholeFirstCalendarDay(t *testing.T) {
+	now := time.Date(2026, 9, 9, 21, 0, 0, 0, time.UTC)
+	firstDayMorning := time.Date(2026, 9, 3, 7, 0, 0, 0, time.UTC)
+	items := []WorkoutView{{Workout: store.Workout{ID: "boundary", Status: "completed", CompletedAt: &firstDayMorning, CreatedAt: firstDayMorning, TotalVolume: 100}}}
+	got := calculateProgressSummary(items, nil, 7, now)
+	if got.CompletedWorkouts != 1 || got.TrainingDays != 1 || got.TotalVolume != 100 {
+		t.Fatalf("first calendar day was excluded: %+v", got)
+	}
+}
 
 func workoutFixture(t *testing.T) (*Service, *store.Memory, string) {
 	t.Helper()
@@ -49,6 +88,48 @@ func TestServiceRequiresOnboardingAndAllowedEnvironment(t *testing.T) {
 	ready, _, readyID := workoutFixture(t)
 	if _, err := ready.Generate(ctx, readyID, GenerateInput{Muscle: "chest", Environment: "bands"}); err == nil || !strings.Contains(err.Error(), "not enabled") {
 		t.Fatalf("environment err=%v", err)
+	}
+}
+
+func TestCreateManualWorkoutValidatesAndPersistsSelection(t *testing.T) {
+	svc, st, userID := workoutFixture(t)
+	ctx := context.Background()
+	weight := 24.0
+	created, err := svc.CreateManual(ctx, userID, ManualWorkoutInput{
+		Muscle: "chest", Environment: "gym", DurationMinutes: 50,
+		Exercises: []ManualExerciseInput{
+			{ExerciseID: "bench_press", TargetSets: 4, TargetReps: 8, TargetWeight: &weight, RestSeconds: 120},
+			{ExerciseID: "pushup", TargetSets: 3, TargetReps: 12, RestSeconds: 75},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Workout.Status != "planned" || len(created.Exercises) != 2 {
+		t.Fatalf("created=%+v", created)
+	}
+	first := created.Exercises[0].WorkoutExercise
+	if first.TargetSets != 4 || first.TargetRepsMin != 8 || first.TargetRepsMax != 8 || first.TargetWeight == nil || *first.TargetWeight != weight || first.RestSeconds != 120 {
+		t.Fatalf("first=%+v", first)
+	}
+	other, err := st.CreateUser(ctx, "manual-other@example.com", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Get(ctx, other.ID, created.Workout.ID); !errors.Is(err, store.ErrForbidden) && !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("manual workout leaked across owners: %v", err)
+	}
+
+	bad := []ManualWorkoutInput{
+		{Muscle: "chest", Environment: "gym", DurationMinutes: 50},
+		{Muscle: "chest", Environment: "gym", DurationMinutes: 50, Exercises: []ManualExerciseInput{{ExerciseID: "missing", TargetSets: 3, TargetReps: 10, RestSeconds: 60}}},
+		{Muscle: "chest", Environment: "gym", DurationMinutes: 50, Exercises: []ManualExerciseInput{{ExerciseID: "bench_press", TargetSets: 3, TargetReps: 10, RestSeconds: 60}, {ExerciseID: "bench_press", TargetSets: 3, TargetReps: 10, RestSeconds: 60}}},
+		{Muscle: "chest", Environment: "home", DurationMinutes: 50, Exercises: []ManualExerciseInput{{ExerciseID: "bench_press", TargetSets: 3, TargetReps: 10, RestSeconds: 60}}},
+	}
+	for i, input := range bad {
+		if _, err := svc.CreateManual(ctx, userID, input); err == nil {
+			t.Fatalf("bad input %d accepted", i)
+		}
 	}
 }
 

@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, Readiness} from '../api/client';
 import {currentLocalDate} from '../domain/date';
 import {AppButton} from '../components/AppButton';
@@ -19,20 +19,22 @@ export function HomeScreen({
   accessToken,
   onMuscle,
   onHistory,
+  onManualWorkout,
   onPrograms,
   onAI,
   onRecovery,
   onDevices,
-  onLogout,
+  onProfile,
 }: {
   accessToken: string;
   onMuscle: (muscle: MuscleId, environment: Environment) => void;
   onHistory: () => void;
+  onManualWorkout: () => void;
   onPrograms: () => void;
   onAI: () => void;
   onRecovery: () => void;
   onDevices: () => void;
-  onLogout: () => void;
+  onProfile: () => void;
 }) {
   const [environment, setEnvironment] = useState<Environment>('gym');
   const [allowedEnvironments, setAllowedEnvironments] = useState<Environment[]>(['gym']);
@@ -54,13 +56,6 @@ export function HomeScreen({
     api.recoveryToday(accessToken, currentLocalDate()).then(setReadiness).catch(() => setReadinessError(true)).finally(() => setReadinessLoading(false));
   }, [accessToken]);
 
-  function openProfileMenu() {
-    Alert.alert('Профиль', 'Настройки аккаунта будут расширены в следующем UI-спринте.', [
-      {text: 'Закрыть', style: 'cancel'},
-      {text: 'Выйти', style: 'destructive', onPress: onLogout},
-    ]);
-  }
-
   return (
     <ScrollView testID="home-screen" contentContainerStyle={styles.container}>
       <View style={styles.topline}>
@@ -73,7 +68,7 @@ export function HomeScreen({
           accessibilityLabel="Открыть профиль"
           testID="home-profile"
           hitSlop={4}
-          onPress={openProfileMenu}
+          onPress={onProfile}
           style={({pressed}) => [styles.profileButton, pressed && styles.pressed]}>
           <Text style={styles.profileText}>Н</Text>
         </Pressable>
@@ -137,6 +132,7 @@ export function HomeScreen({
 
       <Text accessibilityRole="header" style={styles.title}>Что тренируем сегодня?</Text>
       <Text style={styles.subtitle}>Выбери место тренировки, затем группу мышц. На следующем экране увидишь историю нагрузки и персональную тренировку.</Text>
+      <AppButton label="Собрать тренировку вручную" variant="secondary" testID="home-manual-workout" onPress={onManualWorkout} />
 
       {profileLoading ? <View accessibilityRole="progressbar" accessibilityLabel="Загрузка мест тренировки" style={styles.inlineLoading}><ActivityIndicator size="small"/><Text style={styles.programMeta}>Загружаем доступные места…</Text></View> : null}
       <View style={styles.segment} accessibilityRole="tablist">
