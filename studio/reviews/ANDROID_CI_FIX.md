@@ -1,8 +1,8 @@
-# Android CI SDK fix
+# Android CI toolchain and native-dependency fix
 
 ## Goal
 
-Restore the Android debug CI job by replacing SDK packages that are not available on the stable Android SDK channel with an internally consistent stable toolchain.
+Restore the Android debug CI job with an internally consistent stable toolchain and React Native 0.87-compatible native dependencies.
 
 ## Changes
 
@@ -10,6 +10,8 @@ Restore the Android debug CI job by replacing SDK packages that are not availabl
 - The Android root Gradle configuration now compiles with SDK 36 and Build Tools 36.0.0.
 - `targetSdkVersion` remains 36, so compile and target SDK versions are aligned.
 - The native Android verifier and setup documentation now assert/document the same versions.
+- CI uses JDK 21, matching the committed Gradle wrapper bytecode level.
+- `react-native-safe-area-context` is pinned to 5.9.1; unlike 5.5.2, this release no longer calls the removed `UIManagerModule.uiImplementation` API and therefore compiles with React Native 0.87.
 
 ## Rationale
 
@@ -29,12 +31,13 @@ Primary references:
 - `unzip -l apps/mobile/android/gradle/wrapper/gradle-wrapper.jar` confirmed `org/gradle/wrapper/GradleWrapperMain.class` is present, covering the one environment-blocked verifier assertion.
 - Static cross-file version consistency check — passed for CI, Gradle, verifier, and setup documentation; no stale Android 37 references remain in those Android-CI files.
 - `git diff --check` — passed.
-- Full Gradle APK assembly was not available because this environment has neither `sdkmanager` nor installed mobile dependencies.
+- `npm ci` and `npm run typecheck` — passed with the updated dependency lock.
+- Full Gradle APK assembly is delegated to the GitHub-hosted Android gate because this workspace has no Android SDK.
 
 ## Risks
 
 - This intentionally differs from the React Native 0.87 default template value of 37. The RN release states a minimum compile SDK of 34, so compile SDK 36 remains above the minimum, but an upstream dependency could independently require 37 in a future update.
-- The CI job should be re-run on GitHub to prove package installation and full APK assembly in the hosted runner environment.
+- The CI job must prove package installation and full APK assembly in the hosted runner environment before merge.
 
 ## Unresolved items
 
