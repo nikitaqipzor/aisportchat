@@ -1,0 +1,72 @@
+name: restore-r2-source
+
+on:
+  push:
+    branches:
+      - recovery/sprint-4c-r2
+    paths:
+      - '.recovery/r2-recovery.tar.gz'
+      - '.github/workflows/recover-r2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: recovery/sprint-4c-r2
+          fetch-depth: 0
+      - name: Verify recovery artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '5422055cc683f28a2d153c6762efbdc20c9976dbf8612482b7abde9438676224  .recovery/r2-recovery.tar.gz' | sha256sum -c -
+      - name: Restore Sprint 4C R2 tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/r2-restore
+          tar -xzf .recovery/r2-recovery.tar.gz -C /tmp/r2-restore
+          find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .recovery -exec rm -rf {} +
+          cp -a /tmp/r2-restore/. .
+          rm -rf .recovery
+          rm -f .github/workflows/recover-r2.yml
+          cat > .gitignore <<'EOF'
+          # Dependencies/build output
+          node_modules/
+          dist/
+          build/
+          .gradle/
+          apps/mobile/android/.cxx/
+          apps/mobile/android/app/build/
+          apps/mobile/android/build/
+
+          # Local environment/secrets
+          .env
+          .env.*
+          !.env.example
+          *.jks
+          *.keystore
+          !apps/mobile/android/app/debug.keystore
+          keystore.properties
+          local.properties
+
+          # OS/editor
+          .DS_Store
+          .idea/
+          .vscode/
+          *.swp
+          EOF
+      - name: Commit restored source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'recovery: restore AI Fitness OS Sprint 4C R2 source'
+          git push origin HEAD:recovery/sprint-4c-r2
