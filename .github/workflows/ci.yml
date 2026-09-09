@@ -1,0 +1,97 @@
+name: release-gate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: fitness
+          POSTGRES_PASSWORD: fitness
+          POSTGRES_DB: fitness
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U fitness -d fitness"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGPASSWORD: fitness
+      POSTGRES_TEST_DSN: postgres://fitness:fitness@127.0.0.1:5432/fitness?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/api/go.mod
+          cache-dependency-path: services/api/go.mod
+      - name: Install PostgreSQL client/libpq
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client libpq-dev
+      - name: Migration up/down/up smoke
+        run: ./scripts/postgres-migration-smoke.sh
+      - name: Go release gate + PostgreSQL integration
+        working-directory: services/api
+        run: go test -race -p=1 ./...
+      - name: Non-CGO portability gate
+        working-directory: services/api
+        env:
+          CGO_ENABLED: 0
+        run: go test ./...
+      - name: Vet
+        working-directory: services/api
+        run: go vet ./...
+
+  static-mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install TypeScript verifier
+        run: npm install --global typescript@6.0.3
+      - name: Mobile syntax and runtime regressions
+        run: |
+          node scripts/verify-mobile-syntax.mjs
+          node scripts/test-mobile-auth-refresh.mjs
+          node scripts/test-mobile-session-scope.mjs
+          node scripts/test-mobile-technique-mapping.mjs
+          node scripts/test-mobile-health-passive-sync.mjs
+
+  android-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK/NDK required by RN 0.87
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;27.1.12297006"
+      - name: Install mobile dependencies
+        run: ./scripts/ci-mobile-install.sh
+      - name: Typecheck
+        working-directory: apps/mobile
+        run: npm run typecheck
+      - name: Generate React Native Codegen
+        working-directory: apps/mobile
+        run: npm run android:codegen
+      - name: Assemble debug APK
+        working-directory: apps/mobile
+        run: npm run android:assemble:debug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-fitness-os-debug-apk
+          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
