@@ -1,0 +1,36 @@
+name: import-r2-recovery
+
+on:
+  push:
+    branches:
+      - recovery/r2-clean-restart
+    paths:
+      - .recovery/import.ready
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reassemble recovery archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .recovery/chunks/part-*.b64 | base64 -d > /tmp/r2-source-clean.tar.gz
+          echo "11b956c79036e37dc398bfc6788a8b910d06bf04668b8f36b8d0be2ed1234f3b  /tmp/r2-source-clean.tar.gz" | sha256sum -c -
+      - name: Restore Sprint 4C R2 source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -xzf /tmp/r2-source-clean.tar.gz -C .
+          rm -rf .recovery
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "recovery: restore AI Fitness OS Sprint 4C R2"
+          git push origin HEAD:recovery/r2-clean-restart
