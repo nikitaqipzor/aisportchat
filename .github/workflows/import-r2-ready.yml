@@ -31,8 +31,12 @@ jobs:
           mkdir -p /tmp/aisportchat-r2
           unzip -q /tmp/aisportchat-r2-ready-to-push.zip -d /tmp/aisportchat-r2
           test -f /tmp/aisportchat-r2/aisportchat-r2-ready/README.md
+          rm -f /tmp/aisportchat-r2/aisportchat-r2-ready/.github/workflows/ci.yml
+          cp .github/workflows/import-r2-ready.yml /tmp/import-r2-ready.yml
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           cp -a /tmp/aisportchat-r2/aisportchat-r2-ready/. .
+          mkdir -p .github/workflows
+          cp /tmp/import-r2-ready.yml .github/workflows/import-r2-ready.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
