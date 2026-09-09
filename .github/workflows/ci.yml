@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
       - uses: android-actions/setup-android@v3
       - name: Install stable Android SDK/NDK required by RN 0.87
         run: |

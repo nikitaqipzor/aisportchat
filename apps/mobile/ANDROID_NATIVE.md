@@ -7,7 +7,7 @@ This folder is now a real React Native 0.87 Android application, not a source fr
 - React Native 0.87.0
 - React 19.2.3
 - Node >= 22.11
-- JDK 17+ (JDK 21 recommended)
+- JDK 21 (the committed Gradle wrapper is built for Java 21)
 - compileSdk 36
 - targetSdk 36
 - minSdk 24

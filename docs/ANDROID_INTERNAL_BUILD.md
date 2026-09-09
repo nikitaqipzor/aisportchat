@@ -5,7 +5,7 @@
 ## Toolchain
 
 - Node.js >= 22.11
-- JDK 17+ (JDK 21 is supported by the current local setup)
+- JDK 21 (required by the committed Gradle wrapper)
 - Android Studio
 - Android SDK Platform 37
 - Android Build Tools 37.0.0

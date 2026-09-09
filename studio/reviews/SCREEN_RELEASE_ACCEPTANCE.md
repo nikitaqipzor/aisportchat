@@ -12,6 +12,7 @@ Integrate the three parallel screen-hardening batches with the backend, static-m
 - Centralized TypeScript discovery for the five mobile verification scripts so they work with project-local or CI-global TypeScript.
 - Replaced unsupported React Native font weights and the removed AsyncStorage `multiRemove` API.
 - Replaced the Android verifier's external `jar` dependency with Python ZIP inspection.
+- Aligned Android CI with JDK 21, which matches the bytecode level of the committed Gradle wrapper.
 
 ## Tests / evidence
 
