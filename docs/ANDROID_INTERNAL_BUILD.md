@@ -76,6 +76,25 @@ Expected APK:
 apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+The debug APK expects Metro. For a standalone visual-test APK with an embedded
+Hermes bundle, run:
+
+```bash
+cd apps/mobile
+npm run android:assemble:internal
+```
+
+Expected standalone APK:
+
+```text
+apps/mobile/android/app/build/outputs/apk/internal/app-internal.apk
+```
+
+The internal build uses debug signing and does not require Metro. When no API
+URL is supplied, it uses the reserved unreachable preview endpoint so the UI
+can open safely while server-backed actions report a network error. Pass a real
+HTTPS `AI_FITNESS_API_BASE_URL` to test authentication and synchronized flows.
+
 ## 6. Physical Android device
 
 Enable Developer options + USB debugging, then:

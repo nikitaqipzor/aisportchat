@@ -27,6 +27,7 @@
     "android": "react-native run-android",
     "typecheck": "tsc --noEmit",
     "android:assemble:debug": "cd android && ./gradlew assembleDebug",
+    "android:assemble:internal": "cd android && ./gradlew assembleInternal",
     "android:install:debug": "cd android && ./gradlew installDebug",
     "android:bundle:release": "cd android && ./gradlew bundleRelease",
     "android:clean": "cd android && ./gradlew clean",
