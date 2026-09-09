@@ -52,7 +52,7 @@ class BodyPhotoCaptureModule(reactContext: ReactApplicationContext) : NativeBody
             promise.reject("BODY_PHOTO_BUSY", "Камера уже открыта")
             return
         }
-        val activity = currentActivity
+        val activity = reactApplicationContext.currentActivity
         if (activity == null) {
             promise.reject("BODY_PHOTO_NO_ACTIVITY", "Нет активного Android Activity")
             return

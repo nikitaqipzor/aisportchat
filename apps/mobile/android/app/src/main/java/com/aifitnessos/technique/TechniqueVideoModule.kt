@@ -45,7 +45,7 @@ class TechniqueVideoModule(reactContext: ReactApplicationContext) : NativeTechni
 
     override fun recordVideo(maxDurationSeconds: Double, promise: Promise) {
         if (pendingPromise != null) { promise.reject("TECHNIQUE_VIDEO_BUSY", "Камера уже открыта"); return }
-        val activity = currentActivity ?: run { promise.reject("TECHNIQUE_VIDEO_NO_ACTIVITY", "Нет активного Android Activity"); return }
+        val activity = reactApplicationContext.currentActivity ?: run { promise.reject("TECHNIQUE_VIDEO_NO_ACTIVITY", "Нет активного Android Activity"); return }
         val intent = Intent(MediaStore.ACTION_VIDEO_CAPTURE)
         if (intent.resolveActivity(reactApplicationContext.packageManager) == null) { promise.reject("TECHNIQUE_VIDEO_NO_CAMERA", "Видео-камера недоступна"); return }
         val dir = File(reactApplicationContext.cacheDir, "technique_video").apply { mkdirs() }

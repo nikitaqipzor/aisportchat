@@ -73,7 +73,7 @@ settings = text(ANDROID / 'settings.gradle')
 for value, needle in [
     ('compileSdk 36', 'compileSdkVersion = 36'),
     ('targetSdk 36', 'targetSdkVersion = 36'),
-    ('minSdk 24', 'minSdkVersion = 24'),
+    ('minSdk 26', 'minSdkVersion = 26'),
     ('Kotlin 2.2.0', 'kotlinVersion = "2.2.0"'),
 ]:
     require(needle in root_build, value)

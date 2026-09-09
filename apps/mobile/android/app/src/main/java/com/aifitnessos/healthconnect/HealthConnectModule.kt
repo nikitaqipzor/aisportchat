@@ -63,7 +63,7 @@ class HealthConnectModule(reactContext: ReactApplicationContext) : NativeHealthC
             promise.reject("HEALTH_CONNECT_PERMISSION_BUSY", "Health Connect permission request is already open")
             return
         }
-        val activity = currentActivity ?: run {
+        val activity = reactApplicationContext.currentActivity ?: run {
             promise.reject("HEALTH_CONNECT_NO_ACTIVITY", "No foreground Android Activity")
             return
         }
@@ -78,7 +78,7 @@ class HealthConnectModule(reactContext: ReactApplicationContext) : NativeHealthC
     }
 
     override fun openSettings(promise: Promise) {
-        val activity = currentActivity ?: run { promise.resolve(false); return }
+        val activity = reactApplicationContext.currentActivity ?: run { promise.resolve(false); return }
         try {
             activity.startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS))
             promise.resolve(true)

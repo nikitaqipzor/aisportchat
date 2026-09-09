@@ -14,6 +14,7 @@ Integrate the three parallel screen-hardening batches with the backend, static-m
 - Replaced the Android verifier's external `jar` dependency with Python ZIP inspection.
 - Aligned Android CI with JDK 21, which matches the bytecode level of the committed Gradle wrapper.
 - Upgraded `react-native-safe-area-context` from 5.5.2 to 5.9.1 so its Android Kotlin code is compatible with React Native 0.87.
+- Updated native activity access, landmark filtering and the Health Connect minimum SDK contract uncovered by full APK compilation.
 
 ## Tests / evidence
 

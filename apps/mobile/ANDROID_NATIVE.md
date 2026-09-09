@@ -10,7 +10,7 @@ This folder is now a real React Native 0.87 Android application, not a source fr
 - JDK 21 (the committed Gradle wrapper is built for Java 21)
 - compileSdk 36
 - targetSdk 36
-- minSdk 24
+- minSdk 26 (Android 8.0; required by the pinned stable Health Connect client)
 - Kotlin 2.2.0
 - Gradle 9.4.1
 - New Architecture + Hermes enabled

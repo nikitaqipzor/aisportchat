@@ -50,7 +50,7 @@ class TechniqueLiveModule(reactContext: ReactApplicationContext) : NativeTechniq
             promise.reject("TECHNIQUE_LIVE_BUSY", "Live-анализ уже открыт")
             return
         }
-        val activity = currentActivity ?: run {
+        val activity = reactApplicationContext.currentActivity ?: run {
             promise.reject("TECHNIQUE_LIVE_NO_ACTIVITY", "Нет активного Android Activity")
             return
         }

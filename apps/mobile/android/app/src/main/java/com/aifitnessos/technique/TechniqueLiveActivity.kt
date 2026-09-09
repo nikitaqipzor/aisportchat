@@ -312,7 +312,9 @@ class TechniqueLiveActivity : AppCompatActivity() {
     private fun framingGuidance(points: List<LivePosePoint>, brightness: Int): String {
         if (brightness < 45) return "Слишком темно — добавьте света"
         val key = intArrayOf(0, 11, 12, 15, 16, 23, 24, 25, 26, 27, 28)
-        val visible = key.mapNotNull { index -> points.getOrNull(index)?.takeIf { it.visibility >= .5f } }
+        val visible: List<LivePosePoint> = key
+            .map { index -> points.getOrNull(index)?.takeIf { point -> point.visibility >= .5f } }
+            .filterNotNull()
         if (visible.size < 8) return "Не вижу всё тело — отойдите дальше или измените ракурс"
         val confidence = visible.map { it.visibility }.average()
         val minX = visible.minOf { it.x }; val maxX = visible.maxOf { it.x }

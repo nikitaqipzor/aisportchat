@@ -7,11 +7,11 @@
 - Node.js >= 22.11
 - JDK 21 (required by the committed Gradle wrapper)
 - Android Studio
-- Android SDK Platform 37
-- Android Build Tools 37.0.0
+- Android SDK Platform 36
+- Android Build Tools 36.0.0
 - Android SDK Platform Tools
 
-The project uses the React Native 0.87 Android template toolchain: minSdk 24, compileSdk 37, targetSdk 36, Kotlin 2.2.0 and Gradle 9.4.1.
+The project uses minSdk 26, compileSdk 36, targetSdk 36, Kotlin 2.2.0 and Gradle 9.4.1. Android 8.0 is the oldest supported release because the pinned stable `androidx.health.connect:connect-client:1.1.0` dependency requires API 26; do not bypass this contract with a manifest override.
 
 ## 1. Install dependencies
 

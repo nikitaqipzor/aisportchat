@@ -45,7 +45,7 @@ class FoodPhotoPickerModule(reactContext: ReactApplicationContext) : NativeFoodP
             promise.reject("PHOTO_PICK_BUSY", "Photo picker is already open")
             return
         }
-        val activity = currentActivity
+        val activity = reactApplicationContext.currentActivity
         if (activity == null) {
             promise.reject("PHOTO_PICK_NO_ACTIVITY", "No foreground activity")
             return

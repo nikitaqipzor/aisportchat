@@ -12,6 +12,8 @@ Restore the Android debug CI job with an internally consistent stable toolchain 
 - The native Android verifier and setup documentation now assert/document the same versions.
 - CI uses JDK 21, matching the committed Gradle wrapper bytecode level.
 - `react-native-safe-area-context` is pinned to 5.9.1; unlike 5.5.2, this release no longer calls the removed `UIManagerModule.uiImplementation` API and therefore compiles with React Native 0.87.
+- Native modules now obtain the foreground activity through `reactApplicationContext.currentActivity`, the React Native 0.87-compatible accessor.
+- Technique framing converts its primitive landmark index array with `map(...).filterNotNull()`, avoiding the unavailable `IntArray.mapNotNull` overload while preserving visibility filtering.
 
 ## Rationale
 
@@ -32,6 +34,8 @@ Primary references:
 - Static cross-file version consistency check — passed for CI, Gradle, verifier, and setup documentation; no stale Android 37 references remain in those Android-CI files.
 - `git diff --check` — passed.
 - `npm ci` and `npm run typecheck` — passed with the updated dependency lock.
+- `node scripts/verify-mobile-syntax.mjs` plus all four mobile runtime-regression scripts — passed.
+- `python3 scripts/verify_android_native.py` — 122 native checks passed after the Kotlin and minimum-SDK repairs.
 - Full Gradle APK assembly is delegated to the GitHub-hosted Android gate because this workspace has no Android SDK.
 
 ## Risks
