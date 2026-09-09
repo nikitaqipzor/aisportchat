@@ -1,9 +1,9 @@
 import React, {useCallback, useEffect, useMemo, useState} from 'react';
-import {Alert, Image, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, BodyScanComparison, BodyScanDetails} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {bodyPhotoCapture} from '../native/bodyPhoto';
-import {colors, spacing} from '../theme/tokens';
+import {colors, control, radius, spacing} from '../theme/tokens';
 
 type ViewID = 'front' | 'side' | 'back';
 const views: Array<{id: ViewID; title: string; hint: string}> = [
@@ -19,6 +19,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
   const [previews, setPreviews] = useState<Partial<Record<ViewID, string>>>({});
   const [busy, setBusy] = useState<ViewID | 'start' | 'complete' | null>(null);
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -30,26 +31,26 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
       try { setComparison(await api.latestBodyScanComparison(accessToken)); } catch { setComparison(null); }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить Body Scan');
-    }
+    } finally { setLoading(false); }
   }, [accessToken]);
 
   useEffect(() => { void load(); }, [load]);
 
-  async function ensureScan() {
+  async function ensureScan(manageBusy = true) {
     if (current) return current;
-    setBusy('start');
+    if (manageBusy) setBusy('start');
     try {
       const next = await api.createBodyScan(accessToken);
       setCurrent(next);
       return next;
-    } finally { setBusy(null); }
+    } finally { if (manageBusy) setBusy(null); }
   }
 
   async function capture(view: ViewID) {
     try {
       setError('');
       setBusy(view);
-      const scan = current ?? await ensureScan();
+      const scan = current ?? await ensureScan(false);
       const image = await bodyPhotoCapture.captureImage();
       setPreviews(prev => ({...prev, [view]: image}));
       const next = await api.putBodyScanPhoto(accessToken, scan.scan.id, view, image);
@@ -59,6 +60,11 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
       setError(message);
       Alert.alert('Body Scan', message);
     } finally { setBusy(null); }
+  }
+
+  async function startScan() {
+    try { setError(''); await ensureScan(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Не удалось начать Body Scan'); }
   }
 
   async function discard() {
@@ -92,22 +98,27 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <Pressable accessibilityRole="button" onPress={onBack} hitSlop={10}><Text style={styles.back}>← Прогресс</Text></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Вернуться к прогрессу" onPress={onBack} hitSlop={8} style={styles.navButton}><Text style={styles.back}>← Прогресс</Text></Pressable>
       <Text style={styles.kicker}>AI FITNESS · PHASE 3</Text>
-      <Text style={styles.title}>Body Scan</Text>
+      <Text accessibilityRole="header" style={styles.title}>Body Scan</Text>
       <Text style={styles.subtitle}>Три одинаково снятых ракурса создают контрольную точку формы. Фото приватные и доступны только вашему аккаунту.</Text>
+      <View style={styles.privacyCard}><Text style={styles.privacyTitle}>Важно</Text><Text style={styles.muted}>Это визуальное сравнение, а не измерение состава тела или медицинская оценка. Снимайте только себя и не добавляйте в кадр личные документы.</Text></View>
 
-      {!current ? (
+      {loading ? <View style={styles.loading} accessibilityLiveRegion="polite"><ActivityIndicator color={colors.text}/><Text style={styles.muted}>Загружаем Body Scan…</Text></View> : null}
+      {!loading && error && items.length === 0 ? <View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><AppButton label="Повторить" variant="secondary" onPress={()=>{setLoading(true);void load()}}/></View> : null}
+
+      {!loading && !(error && items.length === 0) && !current ? (
         <View style={styles.startCard}>
           <Text style={styles.cardTitle}>Новая контрольная точка</Text>
           <Text style={styles.muted}>Лучше снимать в одинаковом месте, освещении и одежде. Камера должна стоять примерно на уровне талии.</Text>
-          <AppButton label="Начать Body Scan" testID="body-scan-start" loading={busy === 'start'} onPress={() => void ensureScan()} />
+          <AppButton label="Начать Body Scan" testID="body-scan-start" loading={busy === 'start'} disabled={!bodyPhotoCapture.available} onPress={() => void startScan()} />
+          {!bodyPhotoCapture.available ? <Text style={styles.warning}>Камера Body Scan недоступна в этой сборке. Обновите приложение или используйте поддерживаемое Android-устройство.</Text> : null}
         </View>
       ) : (
         <>
           <View style={styles.progressRow}>
             <Text style={styles.cardTitle}>Текущий скан</Text>
-            <Text style={styles.progress}>{current.photos.length}/3</Text>
+            <Text style={styles.progress}>{current?.photos.length ?? 0}/3</Text>
           </View>
           {views.map(item => {
             const saved = photoByView[item.id];
@@ -125,7 +136,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
                     {saved.quality_issues?.map(issue => <Text key={issue} style={styles.warning}>• {issue}</Text>)}
                   </View>
                 ) : null}
-                <AppButton label={saved ? 'Переснять' : `Снять ${item.title.toLowerCase()}`} testID={`body-scan-capture-${item.id}`} loading={busy === item.id} onPress={() => void capture(item.id)} variant={saved ? 'secondary' : 'primary'} />
+                <AppButton label={saved ? 'Переснять' : `Снять ${item.title.toLowerCase()}`} testID={`body-scan-capture-${item.id}`} loading={busy === item.id} disabled={!bodyPhotoCapture.available || (busy !== null && busy !== item.id)} onPress={() => void capture(item.id)} variant={saved ? 'secondary' : 'primary'} />
               </View>
             );
           })}
@@ -153,17 +164,18 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
           <Text style={styles.done}>Готов</Text>
         </View>
       ))}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {error && items.length > 0 ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {padding: spacing.lg, gap: spacing.md, backgroundColor: colors.surface},
-  back: {fontWeight: '850', color: colors.text},
+  navButton:{minHeight:control.minTouch,justifyContent:'center',alignSelf:'flex-start'},back: {fontWeight: '800', color: colors.text},
   kicker: {fontSize: 11, fontWeight: '900', letterSpacing: 1.4, color: colors.textMuted},
-  title: {fontSize: 34, fontWeight: '950', color: colors.text},
+  title: {fontSize: 34, fontWeight: '900', color: colors.text},
   subtitle: {fontSize: 14, lineHeight: 20, color: colors.textMuted},
+  privacyCard:{backgroundColor:colors.surfaceMuted,borderRadius:radius.md,padding:spacing.md,gap:spacing.xs},privacyTitle:{fontWeight:'900',color:colors.text},loading:{minHeight:120,alignItems:'center',justifyContent:'center',gap:spacing.sm},errorBox:{borderWidth:1,borderColor:colors.danger,borderRadius:radius.md,padding:spacing.md,gap:spacing.sm},
   startCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: spacing.lg, gap: spacing.md},
   cardTitle: {fontSize: 17, fontWeight: '900', color: colors.text},
   muted: {fontSize: 12, lineHeight: 18, color: colors.textMuted},
@@ -181,11 +193,11 @@ const styles = StyleSheet.create({
   warning: {fontSize: 11, lineHeight: 16, color: colors.textMuted},
   compareCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: spacing.lg, gap: spacing.sm},
   section: {fontSize: 19, fontWeight: '900', color: colors.text, marginTop: spacing.sm},
-  score: {fontSize: 38, fontWeight: '950', color: colors.text},
+  score: {fontSize: 38, fontWeight: '900', color: colors.text},
   scoreUnit: {fontSize: 15, fontWeight: '800', color: colors.textMuted},
-  metric: {fontSize: 15, fontWeight: '850', color: colors.text},
+  metric: {fontSize: 15, fontWeight: '800', color: colors.text},
   cvPending: {fontSize: 11, lineHeight: 17, color: colors.textMuted, marginTop: spacing.xs},
   historyCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   done: {fontSize: 11, fontWeight: '900', color: colors.text},
-  error: {fontSize: 12, lineHeight: 18, fontWeight: '700', color: colors.text},
+  error: {fontSize: 12, lineHeight: 18, fontWeight: '700', color: colors.danger},
 });

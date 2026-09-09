@@ -6,6 +6,7 @@ import {PoseFrame, techniqueVideo} from '../native/techniqueVideo';
 import {techniqueLive} from '../native/techniqueLive';
 import {PoseSkeletonPreview} from '../components/PoseSkeletonPreview';
 import {TechniqueWorkoutContext, techniqueKeyForExercise} from '../domain/technique';
+import {colors, radius, spacing} from '../theme/tokens';
 
 type Props = {
   accessToken: string;
@@ -24,11 +25,13 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
   const [error, setError] = useState('');
   const [posePreview, setPosePreview] = useState<PoseFrame | null>(null);
   const [nativeLiveCount, setNativeLiveCount] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const linkedKey = useMemo(() => workoutContext ? techniqueKeyForExercise(workoutContext.exerciseId) : null, [workoutContext]);
 
   useEffect(() => { void load(); }, [workoutContext?.workoutExerciseId]);
   async function load() {
+    setLoading(true); setError('');
     try {
       const [catalog, past] = await Promise.all([api.techniqueExercises(accessToken), api.techniqueHistory(accessToken, 8)]);
       setExercises(catalog.items);
@@ -36,6 +39,7 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
       if (linkedKey) setSelected(catalog.items.find(item => item.key === linkedKey) ?? null);
       else if (catalog.items.length) setSelected(current => current ?? catalog.items[0]);
     } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось загрузить анализ техники'); }
+    finally { setLoading(false); }
   }
 
   function payloadContext() {
@@ -91,9 +95,9 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
 
   const linkedUnsupported = Boolean(workoutContext && !linkedKey);
 
-  return <ScrollView contentContainerStyle={styles.container}>
-    <AppButton title="← Назад" variant="secondary" onPress={onBack} testID="technique-back" />
-    <Text style={styles.title}>Анализ техники</Text>
+  return <ScrollView testID="technique-screen" contentContainerStyle={styles.container}>
+    <AppButton label="← Назад" variant="text" onPress={onBack} testID="technique-back" />
+    <Text accessibilityRole="header" style={styles.title}>Анализ техники</Text>
     <Text style={styles.lead}>Pose Landmarks извлекаются на телефоне. На сервер отправляются координаты суставов и время кадров — исходное live-видео не загружается.</Text>
 
     {workoutContext ? <View style={styles.linkedCard}>
@@ -103,21 +107,23 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
     </View> : null}
 
     <Text style={styles.section}>Упражнение</Text>
+    {loading ? <View accessibilityRole="progressbar" accessibilityLabel="Загрузка упражнений" style={styles.loading}><ActivityIndicator color={colors.primary}/><Text style={styles.muted}>Загружаем доступные упражнения…</Text></View> : null}
     {linkedUnsupported ? <Text style={styles.warning}>Для этого упражнения Technique CV пока не откалиброван. Сейчас поддерживаются первые 5 паттернов.</Text> :
-      <View style={styles.grid}>{exercises.map(item => <AppButton key={item.key} title={item.name} variant={selected?.key === item.key ? 'primary' : 'secondary'} onPress={() => !workoutContext && setSelected(item)} disabled={Boolean(workoutContext && item.key !== linkedKey)} />)}</View>}
+      !loading&&exercises.length===0?<View style={styles.empty}><Text style={styles.emptyTitle}>Нет доступных упражнений</Text><Text style={styles.muted}>Проверь подключение и попробуй загрузить каталог ещё раз.</Text><AppButton label="Повторить" variant="secondary" testID="technique-retry" onPress={()=>void load()}/></View>:
+      <View style={styles.grid}>{exercises.map(item => <AppButton key={item.key} label={item.name} variant={selected?.key === item.key ? 'primary' : 'secondary'} onPress={() => !workoutContext && setSelected(item)} disabled={Boolean(workoutContext && item.key !== linkedKey)} />)}</View>}
 
     <View style={styles.tip}><Text style={styles.tipText}>Live-режим подсказывает, если тело выходит из кадра, рисует скелет и считает повторения прямо во время подхода. Сервер после завершения повторно пересчитывает метрики — его результат считается итоговым.</Text></View>
 
     <View style={styles.actions}>
-      <AppButton title={busy ? 'Анализирую…' : '● Live-анализ'} onPress={() => void liveAndAnalyze()} disabled={busy || !selected || !techniqueLive.available()} testID="technique-live" />
-      <AppButton title="Записать видео" variant="secondary" onPress={() => void recordAndAnalyze()} disabled={busy || !selected || !techniqueVideo.available()} testID="technique-record" />
+      <AppButton label="● Live-анализ" loading={busy&&stage.includes('live')} onPress={() => void liveAndAnalyze()} disabled={busy || !selected || !techniqueLive.available()} testID="technique-live" />
+      <AppButton label="Записать видео" loading={busy&&!stage.includes('live')} variant="secondary" onPress={() => void recordAndAnalyze()} disabled={busy || !selected || !techniqueVideo.available()} testID="technique-record" />
     </View>
     {!techniqueLive.available() && <Text style={styles.warning}>Live-режим требует Android native build с CameraX.</Text>}
     {!!stage && <View style={styles.status}><ActivityIndicator/><Text style={styles.statusText}>{stage}</Text></View>}
-    {!!error && <Text style={styles.error}>{error}</Text>}
+    {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     {posePreview && <PoseSkeletonPreview frame={posePreview} />}
     {result && <ResultCard result={result} nativeLiveCount={nativeLiveCount} />}
-    {result && workoutContext && onUseLinkedResult ? <AppButton title={`Использовать ${result.rep_count} повторений в подходе`} onPress={() => onUseLinkedResult(result)} testID="technique-use-result" /> : null}
+    {result && workoutContext && onUseLinkedResult ? <AppButton label={`Использовать ${result.rep_count} повторений в подходе`} onPress={() => onUseLinkedResult(result)} testID="technique-use-result" /> : null}
 
     <Text style={styles.section}>Последние анализы</Text>
     {history.length === 0 ? <Text style={styles.muted}>Пока нет записей.</Text> : history.map(item => <View key={item.id} style={styles.history}><View style={{flex: 1}}><Text style={styles.historyTitle}>{item.exercise_name}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.rep_count} повт. · {item.capture_mode === 'live' ? 'LIVE' : 'VIDEO'}</Text></View><Text style={styles.scoreSmall}>{item.technique_score}</Text></View>)}
@@ -139,4 +145,4 @@ function ResultCard({result, nativeLiveCount}: {result: TechniqueResult; nativeL
   </View>;
 }
 function Metric({name,value}:{name:string;value:number}) {return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricName}>{name}</Text></View>}
-const styles=StyleSheet.create({container:{padding:20,paddingBottom:42,gap:14,backgroundColor:'#fff'},title:{fontSize:30,fontWeight:'900',color:'#111'},lead:{fontSize:15,lineHeight:22,color:'#444'},section:{fontSize:19,fontWeight:'800',color:'#111',marginTop:8},grid:{gap:8},actions:{gap:8},tip:{backgroundColor:'#f4f4f5',borderRadius:16,padding:14},tipText:{fontSize:14,lineHeight:20,color:'#333'},linkedCard:{borderWidth:1,borderColor:'#d8d8d8',borderRadius:18,padding:14,gap:4},linkedEyebrow:{fontSize:11,fontWeight:'900',letterSpacing:1,color:'#777'},linkedTitle:{fontSize:20,fontWeight:'900',color:'#111'},warning:{color:'#8a5a00',lineHeight:20},status:{flexDirection:'row',alignItems:'center',gap:10,padding:14},statusText:{flex:1,color:'#333'},error:{color:'#b42318',fontWeight:'600'},result:{backgroundColor:'#111',borderRadius:24,padding:20,gap:10},resultHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between'},resultTitle:{color:'#fff',fontSize:20,fontWeight:'800'},mode:{color:'#111',backgroundColor:'#fff',fontSize:11,fontWeight:'900',paddingHorizontal:9,paddingVertical:4,borderRadius:10},score:{color:'#fff',fontSize:48,fontWeight:'900'},scoreOf:{fontSize:18,color:'#aaa'},reps:{color:'#ddd'},phaseSummary:{color:'#bbb',fontSize:12,lineHeight:18},liveNote:{color:'#d7f7e2',fontSize:12,lineHeight:18},metrics:{flexDirection:'row',flexWrap:'wrap',gap:8},metric:{backgroundColor:'#222',borderRadius:14,padding:12,minWidth:'46%'},metricValue:{color:'#fff',fontWeight:'900',fontSize:22},metricName:{color:'#aaa',fontSize:12},repLine:{color:'#bbb',fontSize:12},feedback:{color:'#eee',lineHeight:20},disclaimer:{color:'#999',fontSize:11,lineHeight:16,marginTop:6},history:{borderWidth:1,borderColor:'#e5e5e5',borderRadius:16,padding:14,flexDirection:'row',gap:10,justifyContent:'space-between',alignItems:'center'},historyTitle:{fontWeight:'800',color:'#111'},muted:{color:'#777'},scoreSmall:{fontSize:24,fontWeight:'900',color:'#111'}});
+const styles=StyleSheet.create({container:{padding:spacing.lg,paddingBottom:42,gap:spacing.md,backgroundColor:colors.background,flexGrow:1},title:{fontSize:30,fontWeight:'900',color:colors.text},lead:{fontSize:15,lineHeight:22,color:colors.textMuted},section:{fontSize:19,fontWeight:'800',color:colors.text,marginTop:8},grid:{gap:8},actions:{gap:8},tip:{backgroundColor:colors.surfaceMuted,borderRadius:radius.md,padding:14},tipText:{fontSize:14,lineHeight:20,color:colors.text},linkedCard:{borderWidth:1,borderColor:colors.border,borderRadius:radius.lg,padding:14,gap:4},linkedEyebrow:{fontSize:11,fontWeight:'900',letterSpacing:1,color:colors.textMuted},linkedTitle:{fontSize:20,fontWeight:'900',color:colors.text},warning:{color:'#8a5a00',lineHeight:20,borderWidth:1,borderColor:'#d8b36a',borderRadius:radius.md,padding:12},status:{flexDirection:'row',alignItems:'center',gap:10,padding:14},statusText:{flex:1,color:colors.text},error:{color:colors.danger,fontWeight:'600'},result:{backgroundColor:colors.primary,borderRadius:radius.lg,padding:20,gap:10},resultHeader:{flexDirection:'row',alignItems:'center',justifyContent:'space-between'},resultTitle:{color:colors.inverse,fontSize:20,fontWeight:'800'},mode:{color:colors.text,backgroundColor:colors.inverse,fontSize:11,fontWeight:'900',paddingHorizontal:9,paddingVertical:4,borderRadius:10},score:{color:colors.inverse,fontSize:48,fontWeight:'900'},scoreOf:{fontSize:18,color:'#aaa'},reps:{color:'#ddd'},phaseSummary:{color:'#bbb',fontSize:12,lineHeight:18},liveNote:{color:'#d7f7e2',fontSize:12,lineHeight:18},metrics:{flexDirection:'row',flexWrap:'wrap',gap:8},metric:{backgroundColor:'#222',borderRadius:radius.md,padding:12,minWidth:'46%'},metricValue:{color:colors.inverse,fontWeight:'900',fontSize:22},metricName:{color:'#aaa',fontSize:12},repLine:{color:'#bbb',fontSize:12},feedback:{color:'#eee',lineHeight:20},disclaimer:{color:'#999',fontSize:11,lineHeight:16,marginTop:6},history:{borderWidth:1,borderColor:colors.border,borderRadius:radius.md,padding:14,flexDirection:'row',gap:10,justifyContent:'space-between',alignItems:'center'},historyTitle:{fontWeight:'800',color:colors.text},muted:{color:colors.textMuted,lineHeight:19},scoreSmall:{fontSize:24,fontWeight:'900',color:colors.text},loading:{minHeight:100,alignItems:'center',justifyContent:'center',gap:spacing.sm},empty:{borderWidth:1,borderColor:colors.border,borderRadius:radius.md,padding:spacing.md,gap:spacing.sm},emptyTitle:{fontSize:18,fontWeight:'900',color:colors.text}});

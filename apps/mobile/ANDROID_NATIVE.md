@@ -8,7 +8,7 @@ This folder is now a real React Native 0.87 Android application, not a source fr
 - React 19.2.3
 - Node >= 22.11
 - JDK 17+ (JDK 21 recommended)
-- compileSdk 37
+- compileSdk 36
 - targetSdk 36
 - minSdk 24
 - Kotlin 2.2.0
@@ -17,7 +17,7 @@ This folder is now a real React Native 0.87 Android application, not a source fr
 
 ## First build
 
-1. Install Android Studio and SDK Platform 37 / Build Tools 37.0.0.
+1. Install Android Studio and SDK Platform 36 / Build Tools 36.0.0.
 2. Copy `android/local.properties.example` to `android/local.properties` and set `sdk.dir`.
 3. Run `npm install` from `apps/mobile`.
 4. Start Metro: `npm start`.

@@ -18,12 +18,13 @@
 - [x] First accessibility/test selector hardening pass.
 - [x] Non-CGO backend portability gate (`CGO_ENABLED=0`).
 - [x] Router↔OpenAPI drift gate and migration pair/sequence gate.
+- [x] Reproducible mobile dependency lockfile and strict TypeScript typecheck.
+- [x] Production-hardening source pass across all 28 mobile screens.
 
 ## Open release blockers
 
 | Gate | Current state | Required evidence |
 |---|---|---|
-| npm reproducibility | BLOCKED HERE | committed `package-lock.json` + clean `npm ci` |
 | PostgreSQL 18 E2E | CONFIGURED, NOT RUN HERE | green CI migration + HTTP flow |
 | Android build | CONFIGURED, NOT RUN HERE | green `assembleDebug`/release build artifact |
 | Physical Android smoke | NOT RUN | recorded install/auth/workout/offline/native smoke |

@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import type {ScrollViewInstance} from 'react-native';
 import {api, AIChatMessage, AIStatus} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {sessionStorage} from '../storage/session';
@@ -15,7 +16,7 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
   const [error,setError]=useState('');
   const [failed,setFailed]=useState<FailedRequest|null>(null);
   const controllerRef=useRef<AbortController|null>(null);
-  const scrollRef=useRef<ScrollView|null>(null);
+  const scrollRef=useRef<ScrollViewInstance|null>(null);
 
   useEffect(()=>{
     api.aiStatus(accessToken).then(setStatus).catch(()=>undefined);
@@ -65,20 +66,21 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
   }
 
   function stop() { controllerRef.current?.abort(); }
+  const suggestions=['Сколько белка осталось сегодня?','Что я тренировал недавно?','Объясни мой readiness простыми словами'];
 
   return <View style={styles.screen} testID="ai-coach-screen">
     <View style={styles.header}>
-      <Pressable testID="ai-coach-back" accessibilityRole="button" accessibilityLabel="Вернуться на главную" hitSlop={10} onPress={onBack}><Text style={styles.back}>← Главная</Text></Pressable>
-      <Pressable testID="ai-coach-weekly-report" accessibilityRole="button" accessibilityLabel="Открыть недельный отчёт" hitSlop={10} onPress={onWeekly}><Text style={styles.report}>Отчёт недели</Text></Pressable>
+      <Pressable testID="ai-coach-back" accessibilityRole="button" accessibilityLabel="Вернуться на главную" hitSlop={4} onPress={onBack} style={styles.navAction}><Text style={styles.back}>← Главная</Text></Pressable>
+      <Pressable testID="ai-coach-weekly-report" accessibilityRole="button" accessibilityLabel="Открыть недельный отчёт" hitSlop={4} onPress={onWeekly} style={styles.navAction}><Text style={styles.report}>Отчёт недели</Text></Pressable>
     </View>
-    <View style={styles.hero}><Text style={styles.kicker}>AI COACH</Text><Text accessibilityRole="header" style={styles.title}>Персональный тренер</Text><Text style={styles.status}>{status?`${status.provider} · ${status.model}`:'подключаю…'}</Text></View>
-    <ScrollView ref={scrollRef} style={styles.chat} contentContainerStyle={styles.chatInner} keyboardShouldPersistTaps="handled">
-      {messages.length===0?<View style={styles.hint}><Text style={styles.hintTitle}>Можно спросить</Text><Text style={styles.hintText}>«Сколько белка осталось?» · «Что я тренировал недавно?» · «Почему readiness сегодня ниже?»</Text></View>:messages.map((m,i)=><View key={`${m.role}-${i}`} accessibilityLabel={`${m.role==='user'?'Вы':'AI Coach'}: ${m.content}`} style={[styles.bubble,m.role==='user'?styles.user:styles.ai]}><Text style={[styles.bubbleText,m.role==='user'&&styles.userText]}>{m.content}</Text></View>)}
+    <View style={styles.hero}><Text style={styles.kicker}>AI COACH</Text><Text accessibilityRole="header" style={styles.title}>Персональный тренер</Text><Text style={styles.status}>{status?`${status.provider} · ${status.model}`:'Подключение к AI…'}</Text><Text style={styles.disclaimer}>AI может ошибаться. Он объясняет данные приложения, но не заменяет врача и не должен определять нагрузку при боли или ухудшении самочувствия.</Text></View>
+    <ScrollView ref={scrollRef} style={styles.chat} contentContainerStyle={styles.chatInner} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+      {messages.length===0?<View style={styles.hint}><Text style={styles.hintTitle}>Можно спросить</Text><Text style={styles.hintText}>Начните с одного из вопросов:</Text><View style={styles.suggestions}>{suggestions.map(item=><Pressable key={item} accessibilityRole="button" onPress={()=>setInput(item)} style={({pressed})=>[styles.suggestion,pressed&&styles.sendPressed]}><Text style={styles.suggestionText}>{item}</Text></Pressable>)}</View></View>:messages.map((m,i)=><View key={`${m.role}-${i}`} accessibilityLabel={`${m.role==='user'?'Вы':'AI Coach'}: ${m.content}`} style={[styles.bubble,m.role==='user'?styles.user:styles.ai]}><Text style={[styles.bubbleText,m.role==='user'&&styles.userText]}>{m.content}</Text></View>)}
       {busy?<View style={styles.busyRow}><Text style={styles.typing}>AI анализирует твои данные…</Text><AppButton label="Остановить" variant="text" testID="ai-coach-stop" onPress={stop}/></View>:null}
       {error?<View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>{error}</Text>{failed&&!busy?<AppButton label="Повторить" variant="secondary" testID="ai-coach-retry" onPress={()=>void retry()}/>:null}</View>:null}
     </ScrollView>
     <View style={styles.composer}>
-      <TextInput accessibilityLabel="Сообщение AI Coach" testID="ai-coach-input" value={input} onChangeText={setInput} placeholder="Спроси AI Coach…" placeholderTextColor={colors.textMuted} style={styles.input} multiline editable={!busy}/>
+      <TextInput accessibilityLabel="Сообщение AI Coach" testID="ai-coach-input" value={input} onChangeText={setInput} maxLength={1000} placeholder="Спросите AI Coach…" placeholderTextColor={colors.textMuted} style={styles.input} multiline editable={!busy}/>
       <Pressable testID="ai-coach-send" accessibilityRole="button" accessibilityLabel="Отправить сообщение" accessibilityState={{disabled:busy||!input.trim()}} disabled={busy||!input.trim()} hitSlop={4} onPress={()=>void send()} style={({pressed})=>[styles.send,(busy||!input.trim())&&styles.sendDisabled,pressed&&styles.sendPressed]}><Text style={styles.sendText}>↑</Text></Pressable>
     </View>
   </View>;
@@ -86,11 +88,11 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
 
 const styles=StyleSheet.create({
   screen:{flex:1,padding:spacing.lg,gap:spacing.sm,backgroundColor:colors.background},
-  header:{flexDirection:'row',justifyContent:'space-between',minHeight:control.minTouch,alignItems:'center'},back:{fontWeight:'850',color:colors.text},report:{fontWeight:'850',color:colors.text},
-  hero:{gap:3},kicker:{fontSize:11,fontWeight:'900',letterSpacing:1.4,color:colors.textMuted},title:{fontSize:27,fontWeight:'950',color:colors.text},status:{fontSize:11,color:colors.textMuted},
-  chat:{flex:1},chatInner:{gap:9,paddingVertical:8},hint:{borderWidth:1,borderColor:colors.border,borderRadius:radius.lg,padding:15},hintTitle:{fontWeight:'900',color:colors.text},hintText:{fontSize:13,lineHeight:19,color:colors.textMuted,marginTop:5},
+  header:{flexDirection:'row',justifyContent:'space-between',minHeight:control.minTouch,alignItems:'center'},navAction:{minHeight:control.minTouch,justifyContent:'center'},back:{fontWeight:'800',color:colors.text},report:{fontWeight:'800',color:colors.text},
+  hero:{gap:4},kicker:{fontSize:11,fontWeight:'900',letterSpacing:1.4,color:colors.textMuted},title:{fontSize:27,fontWeight:'900',color:colors.text},status:{fontSize:11,color:colors.textMuted},disclaimer:{fontSize:11,lineHeight:16,color:colors.textMuted,marginTop:4},
+  chat:{flex:1},chatInner:{gap:9,paddingVertical:8},hint:{borderWidth:1,borderColor:colors.border,borderRadius:radius.lg,padding:15,gap:spacing.sm},hintTitle:{fontWeight:'900',color:colors.text},hintText:{fontSize:13,lineHeight:19,color:colors.textMuted},suggestions:{gap:spacing.sm},suggestion:{minHeight:control.minTouch,borderWidth:1,borderColor:colors.border,borderRadius:radius.md,paddingHorizontal:spacing.md,justifyContent:'center'},suggestionText:{fontSize:12,lineHeight:18,fontWeight:'700',color:colors.text},
   bubble:{maxWidth:'88%',borderRadius:radius.lg,padding:12},user:{backgroundColor:colors.primary,alignSelf:'flex-end'},ai:{borderWidth:1,borderColor:colors.border,alignSelf:'flex-start',backgroundColor:colors.surface},bubbleText:{fontSize:14,lineHeight:20,color:colors.text},userText:{color:colors.inverse},
-  busyRow:{gap:6},typing:{fontSize:12,color:colors.textMuted},errorBox:{gap:8},error:{fontSize:12,fontWeight:'750',color:colors.danger},
+  busyRow:{gap:6},typing:{fontSize:12,color:colors.textMuted},errorBox:{gap:8},error:{fontSize:12,fontWeight:'700',color:colors.danger},
   composer:{flexDirection:'row',alignItems:'flex-end',gap:8},input:{flex:1,borderWidth:1,borderColor:colors.border,borderRadius:radius.lg,paddingHorizontal:13,paddingVertical:10,maxHeight:100,minHeight:control.minTouch,color:colors.text,backgroundColor:colors.surface},
   send:{width:control.minTouch,height:control.minTouch,borderRadius:control.minTouch/2,backgroundColor:colors.primary,alignItems:'center',justifyContent:'center'},sendDisabled:{opacity:.4},sendPressed:{opacity:.72},sendText:{color:colors.inverse,fontSize:22,fontWeight:'900'},
 });

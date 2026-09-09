@@ -115,7 +115,8 @@ export const sessionStorage = {
   },
 
   async clearTransientData() {
-    await AsyncStorage.multiRemove([ACTIVE_WORKOUT_KEY, OFFLINE_QUEUE_KEY, AI_CHAT_KEY, ...LEGACY_TRANSIENT_KEYS]);
+    const transientKeys = [ACTIVE_WORKOUT_KEY, OFFLINE_QUEUE_KEY, AI_CHAT_KEY, ...LEGACY_TRANSIENT_KEYS];
+    await Promise.all(transientKeys.map(key => AsyncStorage.removeItem(key)));
   },
 
   async saveActiveWorkout(workout: WorkoutView | null) {

@@ -40,7 +40,7 @@ const styles = StyleSheet.create({
   closeText: {fontSize: 18, fontWeight: '800'},
   description: {fontSize: 16, lineHeight: 24, opacity: 0.7},
   section: {gap: 9, borderTopWidth: 1, paddingTop: 16},
-  sectionTitle: {fontSize: 19, fontWeight: '850'},
+  sectionTitle: {fontSize: 19, fontWeight: '800'},
   item: {fontSize: 15, lineHeight: 22},
   note: {borderWidth: 1, borderRadius: 16, padding: 14},
   noteText: {fontSize: 14, lineHeight: 20, fontWeight: '600'},

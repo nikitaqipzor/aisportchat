@@ -1,8 +1,10 @@
 import React, {useEffect, useMemo, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, MuscleStats, Readiness, WorkoutView} from '../api/client';
+import {AppButton} from '../components/AppButton';
 import {MuscleId, muscleMeta} from '../domain/muscles';
 import {currentLocalDate} from '../domain/date';
+import {colors, control, radius, spacing} from '../theme/tokens';
 
 type Environment = 'home' | 'gym' | 'band';
 
@@ -31,15 +33,17 @@ export function MuscleDetailScreen({
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [dailyReadiness, setDailyReadiness] = useState<Readiness | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const status = useMemo(() => readiness(stats), [stats]);
 
   useEffect(() => {
     setLoading(true);
+    setError('');
     Promise.all([api.muscleStats(accessToken, muscle), api.recoveryToday(accessToken, currentLocalDate()).catch(() => null)])
       .then(([nextStats, recovery]) => { setStats(nextStats); setDailyReadiness(recovery); })
       .catch(e => setError(e instanceof Error ? e.message : 'Не удалось загрузить статистику мышцы.'))
       .finally(() => setLoading(false));
-  }, [accessToken, muscle]);
+  }, [accessToken, muscle, loadAttempt]);
 
   async function generate() {
     try {
@@ -54,13 +58,15 @@ export function MuscleDetailScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <Pressable onPress={onBack}><Text style={styles.back}>← Карта тела</Text></Pressable>
+    <ScrollView testID="muscle-detail-screen" contentContainerStyle={styles.container} contentInsetAdjustmentBehavior="automatic">
+      <Pressable accessibilityRole="button" accessibilityLabel="Вернуться к карте тела" hitSlop={8} onPress={onBack} style={styles.backAction}><Text style={styles.back}>← Карта тела</Text></Pressable>
       <Text style={styles.eyebrow}>ГРУППА МЫШЦ</Text>
-      <Text style={styles.title}>{muscleMeta[muscle].title}</Text>
+      <Text accessibilityRole="header" style={styles.title}>{muscleMeta[muscle].title}</Text>
       <Text style={styles.subtitle}>Режим: {environment === 'gym' ? 'зал' : environment === 'home' ? 'дома' : 'резинки'}</Text>
 
-      {loading ? <ActivityIndicator /> : (
+      {loading ? <View accessibilityRole="progressbar" accessibilityLabel="Загрузка статистики мышцы" style={styles.loading}><ActivityIndicator color={colors.primary}/><Text style={styles.heroNote}>Загружаем историю нагрузки…</Text></View> : error && !stats ? (
+        <View accessibilityRole="alert" style={styles.errorCard}><Text style={styles.cardTitle}>Статистика недоступна</Text><Text style={styles.error}>{error}</Text><AppButton label="Повторить" variant="secondary" testID="muscle-detail-retry" onPress={() => setLoadAttempt(value => value + 1)}/></View>
+      ) : (
         <>
           <View style={styles.heroCard}>
             <Text style={styles.heroLabel}>По истории тренировок</Text>
@@ -71,12 +77,12 @@ export function MuscleDetailScreen({
 
           {dailyReadiness ? (() => { const r = dailyReadiness.muscles.find(item => item.muscle === muscle); return r ? <View style={styles.recoveryCard}><Text style={styles.heroLabel}>Recovery сегодня</Text><Text style={styles.recoveryValue}>{r.score}/100 · {r.status === 'ready' ? 'готова' : r.status === 'moderate' ? 'частично восстановлена' : 'утомлена'}</Text><Text style={styles.heroNote}>Soreness {r.soreness}/5 · {r.recent_sets_48h} экв. подходов за 48 часов. Генератор автоматически учтёт этот показатель.</Text></View> : null; })() : null}
 
-          <View style={styles.statsGrid}>
+          {(stats?.completed_workouts ?? 0) === 0 ? <View style={styles.emptyCard}><Text style={styles.cardTitle}>Истории пока нет</Text><Text style={styles.heroNote}>После первой завершённой тренировки здесь появятся объём, подходы и личные рекорды.</Text></View> : <View style={styles.statsGrid}>
             <Stat value={stats?.completed_workouts ?? 0} label="тренировок" />
             <Stat value={stats?.total_sets ?? 0} label="подходов" />
             <Stat value={Math.round(stats?.total_volume ?? 0)} label="кг объёма" />
             <Stat value={stats?.personal_records_count ?? 0} label="PR-событий" />
-          </View>
+          </View>}
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Последняя нагрузка</Text>
@@ -87,10 +93,8 @@ export function MuscleDetailScreen({
         </>
       )}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Pressable style={styles.primary} onPress={generate} disabled={generating}>
-        {generating ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>СОЗДАТЬ ТРЕНИРОВКУ</Text>}
-      </Pressable>
+      {error && stats ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      <AppButton label="Создать тренировку" accessibilityLabel={`Создать тренировку: ${muscleMeta[muscle].title}`} testID="muscle-detail-generate" onPress={() => void generate()} loading={generating} disabled={loading || Boolean(error && !stats)}/>
     </ScrollView>
   );
 }
@@ -100,12 +104,16 @@ function Stat({value, label}: {value: number; label: string}) {
 }
 
 const styles = StyleSheet.create({
-  container: {padding: 20, gap: 14},
-  back: {fontWeight: '800'},
+  container: {padding: spacing.lg, paddingBottom: spacing.xl, gap: 14, backgroundColor: colors.background, flexGrow: 1},
+  backAction: {minHeight: control.minTouch, justifyContent: 'center', alignSelf: 'flex-start'},
+  back: {fontWeight: '800', color: colors.text},
   eyebrow: {fontSize: 11, fontWeight: '800', letterSpacing: 1.5, opacity: 0.5, marginTop: 8},
   title: {fontSize: 36, lineHeight: 41, fontWeight: '900'},
   subtitle: {fontSize: 15, opacity: 0.55},
-  heroCard: {borderWidth: 1, borderRadius: 22, padding: 18, gap: 6},
+  loading: {minHeight: 160, borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', gap: spacing.sm},
+  errorCard: {borderWidth: 1, borderColor: colors.danger, borderRadius: radius.lg, padding: spacing.md, gap: spacing.sm},
+  emptyCard: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm},
+  heroCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 22, padding: 18, gap: 6},
   heroLabel: {fontSize: 12, fontWeight: '800', opacity: 0.5},
   heroValue: {fontSize: 23, fontWeight: '900'},
   heroNote: {fontSize: 13, lineHeight: 18, opacity: 0.58},
@@ -120,5 +128,5 @@ const styles = StyleSheet.create({
   row: {fontSize: 14, opacity: 0.68},
   primary: {backgroundColor: '#111', minHeight: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 6},
   primaryText: {color: '#fff', fontWeight: '900'},
-  error: {color: '#8b1e1e'},
+  error: {color: colors.danger, fontSize: 13, lineHeight: 19},
 });

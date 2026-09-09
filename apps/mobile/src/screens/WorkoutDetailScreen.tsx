@@ -2,6 +2,8 @@ import React, {useEffect, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, WorkoutView} from '../api/client';
 import {muscleMeta, MuscleId} from '../domain/muscles';
+import {AppButton} from '../components/AppButton';
+import {colors, control, radius, spacing} from '../theme/tokens';
 
 const recordLabels: Record<string, string> = {
   max_weight: 'Максимальный вес',
@@ -25,15 +27,17 @@ export function WorkoutDetailScreen({
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    api.getWorkout(accessToken, workoutId)
-      .then(setWorkout)
-      .catch(e => setError(e instanceof Error ? e.message : 'Не удалось загрузить тренировку.'))
-      .finally(() => setLoading(false));
-  }, [accessToken, workoutId]);
+  async function load() {
+    setLoading(true); setError('');
+    try { setWorkout(await api.getWorkout(accessToken, workoutId)); }
+    catch (e) { setWorkout(null); setError(e instanceof Error ? e.message : 'Не удалось загрузить тренировку.'); }
+    finally { setLoading(false); }
+  }
 
-  if (loading) return <View style={styles.loading}><ActivityIndicator /></View>;
-  if (!workout) return <View style={styles.loading}><Text>{error || 'Тренировка не найдена.'}</Text></View>;
+  useEffect(() => { void load(); }, [accessToken, workoutId]);
+
+  if (loading) return <View accessibilityRole="progressbar" accessibilityLabel="Загрузка тренировки" style={styles.loading}><ActivityIndicator color={colors.primary} /><Text style={styles.muted}>Загружаем тренировку…</Text></View>;
+  if (!workout) return <View style={styles.loading}><Text accessibilityRole="header" style={styles.stateTitle}>Тренировка недоступна</Text><Text accessibilityRole="alert" style={styles.muted}>{error || 'Тренировка не найдена.'}</Text><AppButton label="Повторить" variant="secondary" testID="workout-detail-retry" onPress={() => void load()} /><AppButton label="К истории" variant="text" onPress={onBack} /></View>;
 
   const muscle = workout.workout.muscle as MuscleId;
 
@@ -62,16 +66,16 @@ export function WorkoutDetailScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView testID="workout-detail-screen" contentContainerStyle={styles.container}>
       <View style={styles.topline}>
-        <Pressable onPress={onBack}><Text style={styles.back}>← История</Text></Pressable>
-        <Pressable onPress={toggleFavorite} disabled={working} style={styles.favorite}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Вернуться к истории" onPress={onBack} style={styles.topAction}><Text style={styles.back}>← История</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={workout.workout.favorite?'Убрать тренировку из избранного':'Добавить тренировку в избранное'} accessibilityState={{disabled:working,busy:working}} onPress={toggleFavorite} disabled={working} style={[styles.favorite,working&&styles.disabled]}>
           <Text style={styles.favoriteText}>{workout.workout.favorite ? '★ В избранном' : '☆ В избранное'}</Text>
         </Pressable>
       </View>
       <Text style={styles.eyebrow}>ТРЕНИРОВКА</Text>
-      <Text style={styles.title}>{muscleMeta[muscle]?.title ?? workout.workout.muscle}</Text>
-      <Text style={styles.meta}>{new Date(workout.workout.completed_at ?? workout.workout.created_at).toLocaleString('ru-RU')} · {workout.workout.environment}</Text>
+      <Text accessibilityRole="header" style={styles.title}>{muscleMeta[muscle]?.title ?? workout.workout.muscle}</Text>
+      <Text style={styles.meta}>{new Date(workout.workout.completed_at ?? workout.workout.created_at).toLocaleString('ru-RU')} · {environmentLabel(workout.workout.environment)}</Text>
 
       <View style={styles.metrics}>
         <Metric label="Объём" value={`${Math.round(workout.workout.total_volume)} кг`} />
@@ -99,11 +103,10 @@ export function WorkoutDetailScreen({
         </View>
       ))}
 
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {workout.exercises.length===0?<View style={styles.empty}><Text style={styles.stateTitle}>Нет записанных упражнений</Text><Text style={styles.muted}>В этой тренировке не сохранилось ни одного упражнения.</Text></View>:null}
+      {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
       {workout.workout.status === 'completed' ? (
-        <Pressable style={styles.primary} onPress={repeat} disabled={working}>
-          {working ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>ПОВТОРИТЬ С ПРОГРЕССИЕЙ</Text>}
-        </Pressable>
+        <AppButton label="Повторить с прогрессией" testID="workout-detail-repeat" loading={working} onPress={() => void repeat()} />
       ) : null}
     </ScrollView>
   );
@@ -113,28 +116,31 @@ function Metric({label, value}: {label: string; value: string}) {
   return <View style={styles.metric}><Text style={styles.metricValue}>{value}</Text><Text style={styles.metricLabel}>{label}</Text></View>;
 }
 
+function environmentLabel(value: string) { return value==='gym'?'Зал':value==='home'?'Дома':value==='band'?'Резинки':value; }
+
 const styles = StyleSheet.create({
-  loading: {flex: 1, alignItems: 'center', justifyContent: 'center'},
-  container: {padding: 20, gap: 14},
+  loading: {flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg, gap: spacing.md, backgroundColor: colors.background},
+  container: {padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md, backgroundColor: colors.background},
   topline: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
-  back: {fontWeight: '800'},
-  favorite: {borderWidth: 1, borderRadius: 12, paddingHorizontal: 11, paddingVertical: 8},
-  favoriteText: {fontWeight: '800'},
-  eyebrow: {fontSize: 11, fontWeight: '800', letterSpacing: 1.4, opacity: 0.45},
-  title: {fontSize: 34, fontWeight: '900'},
-  meta: {fontSize: 13, opacity: 0.55},
+  topAction: {minHeight: control.minTouch, justifyContent: 'center', paddingHorizontal: spacing.xs},
+  back: {fontWeight: '800', color: colors.text},
+  favorite: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 11, minHeight: control.minTouch, justifyContent:'center'},
+  favoriteText: {fontWeight: '800', color: colors.text},
+  eyebrow: {fontSize: 11, fontWeight: '800', letterSpacing: 1.4, color: colors.textMuted},
+  title: {fontSize: 34, lineHeight:40, fontWeight: '900', color:colors.text},
+  meta: {fontSize: 13, lineHeight:18, color:colors.textMuted},
   metrics: {flexDirection: 'row', gap: 8},
-  metric: {flex: 1, borderWidth: 1, borderRadius: 16, padding: 12},
-  metricValue: {fontSize: 19, fontWeight: '900'},
-  metricLabel: {fontSize: 11, opacity: 0.5, marginTop: 4},
-  sectionTitle: {fontSize: 18, fontWeight: '900', marginTop: 4},
-  prCard: {borderWidth: 1, borderRadius: 18, padding: 15, gap: 7},
-  prRow: {fontSize: 13, lineHeight: 18},
-  exerciseCard: {borderWidth: 1, borderRadius: 18, padding: 15, gap: 5},
-  exerciseTitle: {fontSize: 17, fontWeight: '900'},
-  target: {fontSize: 13, opacity: 0.55},
-  set: {fontSize: 13, opacity: 0.72},
+  metric: {flex: 1, borderWidth: 1, borderColor:colors.border,borderRadius: radius.md, padding: 12},
+  metricValue: {fontSize: 19, fontWeight: '900',color:colors.text},
+  metricLabel: {fontSize: 11, color:colors.textMuted, marginTop: 4},
+  sectionTitle: {fontSize: 18, fontWeight: '900', marginTop: 4,color:colors.text},
+  prCard: {borderWidth: 1,borderColor:colors.border,borderRadius: radius.lg, padding: 15, gap: 7},
+  prRow: {fontSize: 13, lineHeight: 18,color:colors.text},
+  exerciseCard: {borderWidth: 1,borderColor:colors.border,borderRadius: radius.lg, padding: 15, gap: 5},
+  exerciseTitle: {fontSize: 17,lineHeight:23,fontWeight: '900',color:colors.text},
+  target: {fontSize: 13,color:colors.textMuted},
+  set: {fontSize: 13,color:colors.textMuted},
   primary: {backgroundColor: '#111', minHeight: 54, borderRadius: 16, alignItems: 'center', justifyContent: 'center', marginTop: 4},
   primaryText: {color: '#fff', fontWeight: '900'},
-  error: {color: '#8b1e1e'},
+  error: {color: colors.danger,fontWeight:'700'}, muted:{fontSize:14,lineHeight:20,color:colors.textMuted,textAlign:'center'}, stateTitle:{fontSize:20,fontWeight:'900',color:colors.text}, empty:{borderWidth:1,borderColor:colors.border,borderRadius:radius.lg,padding:spacing.md,gap:spacing.xs}, disabled:{opacity:.45},
 });

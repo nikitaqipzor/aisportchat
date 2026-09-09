@@ -1,26 +1,43 @@
 import React, {useState} from 'react';
 import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {api, NutritionProfile} from '../api/client';
+import {AppButton} from '../components/AppButton';
+import {colors, control, radius, spacing} from '../theme/tokens';
 
 type Goal = NutritionProfile['goal'];
 type Activity = NutritionProfile['activity_level'];
 
 const goals: Array<{id: Goal; title: string; subtitle: string}> = [
-  {id: 'lose', title: 'Снижение веса', subtitle: 'Умеренный дефицит'},
-  {id: 'recomp', title: 'Рекомпозиция', subtitle: 'Сохранение мышц + постепенное снижение жира'},
-  {id: 'maintain', title: 'Поддержание', subtitle: 'Стабильный вес'},
-  {id: 'gain', title: 'Набор массы', subtitle: 'Умеренный профицит'},
-  {id: 'strength', title: 'Сила', subtitle: 'Небольшой профицит для силовой работы'},
-  {id: 'endurance', title: 'Выносливость', subtitle: 'Дополнительная энергия под объём'},
+  {id: 'lose', title: 'Снижение веса', subtitle: 'Умеренный дефицит калорий'},
+  {id: 'recomp', title: 'Рекомпозиция', subtitle: 'Сохранять мышцы и постепенно снижать жир'},
+  {id: 'maintain', title: 'Поддержание', subtitle: 'Сохранять текущий вес'},
+  {id: 'gain', title: 'Набор массы', subtitle: 'Умеренный профицит калорий'},
+  {id: 'strength', title: 'Сила', subtitle: 'Поддерживать энергию для силовой работы'},
+  {id: 'endurance', title: 'Выносливость', subtitle: 'Больше энергии для объёмной работы'},
 ];
 
-const activities: Array<{id: Activity; title: string}> = [
-  {id: 'low', title: 'Низкая'},
-  {id: 'light', title: 'Лёгкая'},
-  {id: 'moderate', title: 'Средняя'},
-  {id: 'high', title: 'Высокая'},
-  {id: 'athlete', title: 'Очень высокая'},
+const activities: Array<{id: Activity; title: string; hint: string}> = [
+  {id: 'low', title: 'Низкая', hint: 'В основном сидячий образ жизни'},
+  {id: 'light', title: 'Лёгкая', hint: 'Небольшая активность 1–2 раза в неделю'},
+  {id: 'moderate', title: 'Средняя', hint: 'Активность или тренировки 3–4 раза в неделю'},
+  {id: 'high', title: 'Высокая', hint: 'Интенсивная активность 5–6 раз в неделю'},
+  {id: 'athlete', title: 'Очень высокая', hint: 'Ежедневные тяжёлые тренировки или физическая работа'},
 ];
+
+function numberFromInput(value: string) {
+  return Number(value.replace(',', '.'));
+}
+
+function macroError(value: string) {
+  const number = numberFromInput(value);
+  if (!value.trim()) {
+    return 'Заполните поле';
+  }
+  if (!Number.isFinite(number) || number < 0 || number > 1000) {
+    return 'Введите значение от 0 до 1000 г';
+  }
+  return '';
+}
 
 export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToken: string; onBack: () => void; onSaved: (profile: NutritionProfile) => void}) {
   const [goal, setGoal] = useState<Goal>('recomp');
@@ -33,7 +50,21 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const calorieNumber = numberFromInput(calories);
+  const calorieError = !calories.trim()
+    ? 'Заполните поле'
+    : !Number.isInteger(calorieNumber) || calorieNumber < 800 || calorieNumber > 8000
+      ? 'Введите целое число от 800 до 8000 ккал'
+      : '';
+  const proteinError = macroError(protein);
+  const fatError = macroError(fat);
+  const carbsError = macroError(carbs);
+  const manualValid = !calorieError && !proteinError && !fatError && !carbsError;
+
   async function save() {
+    if (saving || (mode === 'manual' && !manualValid)) {
+      return;
+    }
     try {
       setSaving(true);
       setError('');
@@ -43,71 +74,237 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
         activity_level: activity,
         calculation_mode: mode,
         ...(manual ? {
-          calorie_target: Number(calories),
-          protein_target_g: Number(protein),
-          fat_target_g: Number(fat),
-          carb_target_g: Number(carbs),
+          calorie_target: calorieNumber,
+          protein_target_g: numberFromInput(protein),
+          fat_target_g: numberFromInput(fat),
+          carb_target_g: numberFromInput(carbs),
         } : {}),
       });
       onSaved(profile);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось сохранить настройки питания');
+      setError(e instanceof Error ? e.message : 'Не удалось сохранить настройки питания. Попробуйте ещё раз.');
     } finally {
       setSaving(false);
     }
   }
 
+  function clearServerError() {
+    if (error) {
+      setError('');
+    }
+  }
+
   return (
-    <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.header}><Pressable onPress={onBack}><Text style={styles.back}>← Назад</Text></Pressable><Text style={styles.kicker}>ПИТАНИЕ</Text></View>
-      <Text style={styles.title}>Настроим цель</Text>
-      <Text style={styles.subtitle}>Первый расчёт — ориентир. Позже его можно вручную изменить или адаптировать по реальной динамике веса.</Text>
+    <ScrollView
+      testID="nutrition-setup-screen"
+      contentContainerStyle={styles.container}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}>
+      <View style={styles.content}>
+        <View style={styles.header}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Вернуться к питанию"
+            accessibilityState={{disabled: saving}}
+            disabled={saving}
+            onPress={onBack}
+            style={({pressed}) => [styles.backButton, pressed && styles.pressed]}>
+            <Text style={styles.back}>← Назад</Text>
+          </Pressable>
+          <Text style={styles.kicker}>ПИТАНИЕ</Text>
+        </View>
 
-      <Text style={styles.section}>Цель</Text>
-      <View style={styles.stack}>
-        {goals.map(item => <Pressable key={item.id} onPress={() => setGoal(item.id)} style={[styles.card, goal === item.id && styles.cardActive]}>
-          <Text style={[styles.cardTitle, goal === item.id && styles.activeText]}>{item.title}</Text>
-          <Text style={[styles.cardSubtitle, goal === item.id && styles.activeSub]}>{item.subtitle}</Text>
-        </Pressable>)}
+        <Text accessibilityRole="header" style={styles.title}>Настроим питание</Text>
+        <Text style={styles.subtitle}>
+          Первый расчёт — ориентир, а не медицинское назначение. Позже его можно изменить по реальной динамике веса.
+        </Text>
+
+        <Text style={styles.section}>Цель</Text>
+        <View style={styles.stack} accessibilityRole="radiogroup">
+          {goals.map(item => {
+            const selected = goal === item.id;
+            return (
+              <Pressable
+                key={item.id}
+                testID={`nutrition-goal-${item.id}`}
+                accessibilityRole="radio"
+                accessibilityLabel={item.title}
+                accessibilityHint={item.subtitle}
+                accessibilityState={{selected, disabled: saving}}
+                disabled={saving}
+                onPress={() => {
+                  setGoal(item.id);
+                  clearServerError();
+                }}
+                style={({pressed}) => [styles.card, selected && styles.cardActive, pressed && styles.pressed]}>
+                <Text style={[styles.cardTitle, selected && styles.activeText]}>{item.title}</Text>
+                <Text style={[styles.cardSubtitle, selected && styles.activeSub]}>{item.subtitle}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Text style={styles.section}>Общая активность</Text>
+        <View style={styles.wrap} accessibilityRole="radiogroup">
+          {activities.map(item => {
+            const selected = activity === item.id;
+            return (
+              <Pressable
+                key={item.id}
+                testID={`nutrition-activity-${item.id}`}
+                accessibilityRole="radio"
+                accessibilityLabel={item.title}
+                accessibilityHint={item.hint}
+                accessibilityState={{selected, disabled: saving}}
+                disabled={saving}
+                onPress={() => {
+                  setActivity(item.id);
+                  clearServerError();
+                }}
+                style={({pressed}) => [styles.pill, selected && styles.pillActive, pressed && styles.pressed]}>
+                <Text style={[styles.pillText, selected && styles.activeText]}>{item.title}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <Text style={styles.selectionHint}>{activities.find(item => item.id === activity)?.hint}</Text>
+
+        <Text style={styles.section}>Режим расчёта</Text>
+        <View style={styles.modeRow} accessibilityRole="radiogroup">
+          {(['auto', 'manual'] as const).map(item => {
+            const selected = mode === item;
+            const label = item === 'auto' ? 'Автоматически' : 'Вручную';
+            return (
+              <Pressable
+                key={item}
+                testID={`nutrition-mode-${item}`}
+                accessibilityRole="radio"
+                accessibilityLabel={label}
+                accessibilityState={{selected, disabled: saving}}
+                disabled={saving}
+                onPress={() => {
+                  setMode(item);
+                  clearServerError();
+                }}
+                style={({pressed}) => [styles.modeButton, selected && styles.modeButtonActive, pressed && styles.pressed]}>
+                <Text style={[styles.modeText, selected && styles.activeText]}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {mode === 'manual' ? (
+          <View style={styles.manualGrid}>
+            <ManualField
+              id="calories"
+              label="Калории, ккал"
+              value={calories}
+              error={calorieError}
+              helper="800–8000 ккал"
+              integer
+              disabled={saving}
+              onChange={value => { setCalories(value); clearServerError(); }}
+            />
+            <ManualField id="protein" label="Белок, г" value={protein} error={proteinError} helper="0–1000 г" disabled={saving} onChange={value => { setProtein(value); clearServerError(); }} />
+            <ManualField id="fat" label="Жиры, г" value={fat} error={fatError} helper="0–1000 г" disabled={saving} onChange={value => { setFat(value); clearServerError(); }} />
+            <ManualField id="carbs" label="Углеводы, г" value={carbs} error={carbsError} helper="0–1000 г" disabled={saving} onChange={value => { setCarbs(value); clearServerError(); }} />
+          </View>
+        ) : null}
+
+        <View style={styles.note}>
+          <Text style={styles.noteTitle}>{mode === 'auto' ? 'Как работает расчёт' : 'Проверьте значения'}</Text>
+          <Text style={styles.noteText}>
+            {mode === 'auto'
+              ? 'Мы используем вес из профиля, цель и уровень активности. Результат можно скорректировать вручную.'
+              : 'Сохраним введённые цели без автоматического пересчёта. При резких изменениях рациона проконсультируйтесь со специалистом.'}
+          </Text>
+        </View>
+
+        {error ? (
+          <Text accessibilityRole="alert" accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text>
+        ) : null}
+        <AppButton
+          label={mode === 'auto' ? 'Рассчитать питание' : 'Сохранить цели'}
+          accessibilityLabel={mode === 'auto' ? 'Рассчитать и сохранить питание' : 'Сохранить ручные цели питания'}
+          testID="nutrition-save"
+          loading={saving}
+          disabled={mode === 'manual' && !manualValid}
+          onPress={() => void save()}
+        />
       </View>
-
-      <Text style={styles.section}>Общая активность</Text>
-      <View style={styles.wrap}>
-        {activities.map(item => <Pressable key={item.id} onPress={() => setActivity(item.id)} style={[styles.pill, activity === item.id && styles.pillActive]}>
-          <Text style={[styles.pillText, activity === item.id && styles.activeText]}>{item.title}</Text>
-        </Pressable>)}
-      </View>
-
-      <Text style={styles.section}>Режим расчёта</Text>
-      <View style={styles.modeRow}>
-        <Pressable onPress={() => setMode('auto')} style={[styles.modeButton, mode === 'auto' && styles.modeButtonActive]}><Text style={[styles.modeText, mode === 'auto' && styles.activeText]}>Авто</Text></Pressable>
-        <Pressable onPress={() => setMode('manual')} style={[styles.modeButton, mode === 'manual' && styles.modeButtonActive]}><Text style={[styles.modeText, mode === 'manual' && styles.activeText]}>Вручную</Text></Pressable>
-      </View>
-      {mode === 'manual' ? <View style={styles.manualGrid}>
-        <View style={styles.manualField}><Text style={styles.label}>Ккал</Text><TextInput value={calories} onChangeText={setCalories} keyboardType="number-pad" style={styles.manualInput} /></View>
-        <View style={styles.manualField}><Text style={styles.label}>Белок, г</Text><TextInput value={protein} onChangeText={setProtein} keyboardType="decimal-pad" style={styles.manualInput} /></View>
-        <View style={styles.manualField}><Text style={styles.label}>Жиры, г</Text><TextInput value={fat} onChangeText={setFat} keyboardType="decimal-pad" style={styles.manualInput} /></View>
-        <View style={styles.manualField}><Text style={styles.label}>Углеводы, г</Text><TextInput value={carbs} onChangeText={setCarbs} keyboardType="decimal-pad" style={styles.manualInput} /></View>
-      </View> : null}
-
-      <View style={styles.note}><Text style={styles.noteText}>Авто-режим использует текущий вес из профиля как стартовый ориентир. Все цели можно переключить на ручной режим.</Text></View>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Pressable disabled={saving} onPress={save} style={styles.primary}><Text style={styles.primaryText}>{saving ? 'Сохраняю…' : 'Рассчитать питание'}</Text></Pressable>
     </ScrollView>
   );
 }
 
+function ManualField({id, label, value, error, helper, integer = false, disabled, onChange}: {
+  id: string;
+  label: string;
+  value: string;
+  error: string;
+  helper: string;
+  integer?: boolean;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const showError = Boolean(value.trim()) && Boolean(error);
+  return (
+    <View style={styles.manualField}>
+      <Text nativeID={`nutrition-${id}-label`} style={styles.label}>{label}</Text>
+      <TextInput
+        accessibilityLabelledBy={`nutrition-${id}-label`}
+        accessibilityHint={helper}
+        testID={`nutrition-${id}`}
+        value={value}
+        editable={!disabled}
+        maxLength={7}
+        onChangeText={onChange}
+        keyboardType={integer ? 'number-pad' : 'decimal-pad'}
+        selectTextOnFocus
+        style={[styles.manualInput, showError && styles.inputError]}
+      />
+      <Text accessibilityRole={showError ? 'alert' : 'text'} style={[styles.helper, showError && styles.fieldError]}>
+        {showError ? error : helper}
+      </Text>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {padding: 20, gap: 14},
-  header: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
-  back: {fontWeight: '800'}, kicker: {fontSize: 11, fontWeight: '900', letterSpacing: 1.4, opacity: 0.55},
-  title: {fontSize: 30, fontWeight: '900', marginTop: 8}, subtitle: {fontSize: 15, lineHeight: 21, opacity: 0.65},
-  section: {fontSize: 18, fontWeight: '900', marginTop: 8}, stack: {gap: 8},
-  card: {borderWidth: 1, borderRadius: 18, padding: 14}, cardActive: {backgroundColor: '#111', borderColor: '#111'},
-  cardTitle: {fontSize: 16, fontWeight: '850'}, cardSubtitle: {fontSize: 12, marginTop: 4, opacity: 0.55}, activeText: {color: '#fff'}, activeSub: {color: '#fff', opacity: 0.72},
-  wrap: {flexDirection: 'row', flexWrap: 'wrap', gap: 8}, pill: {borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10}, pillActive: {backgroundColor: '#111'}, pillText: {fontWeight: '750'},
-  modeRow: {flexDirection: 'row', gap: 8}, modeButton: {flex: 1, borderWidth: 1, borderRadius: 14, paddingVertical: 11, alignItems: 'center'}, modeButtonActive: {backgroundColor: '#111'}, modeText: {fontWeight: '850'},
-  manualGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: 8}, manualField: {width: '48%', gap: 5}, label: {fontSize: 11, fontWeight: '750', opacity: 0.55}, manualInput: {borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontWeight: '850', fontSize: 16},
-  note: {borderWidth: 1, borderRadius: 16, padding: 14, marginTop: 4}, noteText: {fontSize: 13, lineHeight: 18, opacity: 0.68},
-  error: {fontSize: 13, fontWeight: '700'}, primary: {backgroundColor: '#111', borderRadius: 18, paddingVertical: 15, alignItems: 'center', marginTop: 4}, primaryText: {color: '#fff', fontWeight: '900', fontSize: 16},
+  container: {flexGrow: 1, padding: spacing.lg, backgroundColor: colors.background},
+  content: {width: '100%', maxWidth: 680, alignSelf: 'center', gap: spacing.md},
+  header: {minHeight: control.minTouch, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
+  backButton: {minHeight: control.minTouch, minWidth: control.minTouch, justifyContent: 'center', paddingRight: spacing.sm},
+  back: {fontSize: 15, fontWeight: '800', color: colors.text},
+  kicker: {fontSize: 11, fontWeight: '900', letterSpacing: 1.4, color: colors.textMuted},
+  title: {fontSize: 30, lineHeight: 37, fontWeight: '900', color: colors.text},
+  subtitle: {fontSize: 15, lineHeight: 22, color: colors.textMuted},
+  section: {fontSize: 18, lineHeight: 24, fontWeight: '900', marginTop: spacing.sm, color: colors.text},
+  stack: {gap: spacing.sm},
+  card: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, paddingHorizontal: 14, paddingVertical: 12, minHeight: 64, justifyContent: 'center', backgroundColor: colors.surface},
+  cardActive: {backgroundColor: colors.primary, borderColor: colors.primary},
+  cardTitle: {fontSize: 16, lineHeight: 21, fontWeight: '800', color: colors.text},
+  cardSubtitle: {fontSize: 12, lineHeight: 17, marginTop: 3, color: colors.textMuted},
+  activeText: {color: colors.inverse},
+  activeSub: {color: colors.inverse, opacity: 0.76},
+  wrap: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  pill: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.pill, paddingHorizontal: 14, minHeight: control.minTouch, justifyContent: 'center', backgroundColor: colors.surface},
+  pillActive: {backgroundColor: colors.primary, borderColor: colors.primary},
+  pillText: {fontWeight: '800', color: colors.text},
+  selectionHint: {fontSize: 12, lineHeight: 18, color: colors.textMuted, marginTop: -spacing.sm},
+  modeRow: {flexDirection: 'row', gap: spacing.sm},
+  modeButton: {flex: 1, minHeight: control.minTouch, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.sm, backgroundColor: colors.surface},
+  modeButtonActive: {backgroundColor: colors.primary, borderColor: colors.primary},
+  modeText: {fontWeight: '800', color: colors.text, textAlign: 'center'},
+  manualGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm},
+  manualField: {width: '48%', flexGrow: 1, minWidth: 132},
+  label: {fontSize: 12, lineHeight: 17, fontWeight: '800', color: colors.text, marginBottom: spacing.xs},
+  manualInput: {minHeight: control.minTouch, borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.surface, fontWeight: '800', fontSize: 16},
+  inputError: {borderColor: colors.danger},
+  helper: {fontSize: 11, lineHeight: 16, color: colors.textMuted, marginTop: spacing.xs},
+  fieldError: {color: colors.danger},
+  note: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 14, marginTop: spacing.xs, backgroundColor: colors.surfaceMuted},
+  noteTitle: {fontSize: 13, lineHeight: 18, fontWeight: '900', color: colors.text, marginBottom: spacing.xs},
+  noteText: {fontSize: 13, lineHeight: 19, color: colors.textMuted},
+  error: {fontSize: 13, lineHeight: 19, fontWeight: '700', color: colors.danger},
+  pressed: {opacity: 0.72},
 });

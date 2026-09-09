@@ -444,5 +444,5 @@ const styles = StyleSheet.create({
   loading: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12},
   loadingText: {fontWeight: '700', opacity: 0.6},
   banner: {paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1},
-  bannerText: {fontSize: 12, lineHeight: 17, fontWeight: '650'},
+  bannerText: {fontSize: 12, lineHeight: 17, fontWeight: '600'},
 });

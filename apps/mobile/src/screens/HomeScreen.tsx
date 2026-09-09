@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {Alert, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, Readiness} from '../api/client';
 import {currentLocalDate} from '../domain/date';
 import {AppButton} from '../components/AppButton';
@@ -37,16 +37,21 @@ export function HomeScreen({
   const [environment, setEnvironment] = useState<Environment>('gym');
   const [allowedEnvironments, setAllowedEnvironments] = useState<Environment[]>(['gym']);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const [readinessLoading, setReadinessLoading] = useState(true);
+  const [readinessError, setReadinessError] = useState(false);
 
   useEffect(() => {
+    setProfileLoading(true);
     api.getProfile(accessToken).then(profile => {
       const allowed = (profile.training_preferences?.environments ?? []) as Environment[];
       if (allowed.length > 0) {
         setAllowedEnvironments(allowed);
         if (!allowed.includes(environment)) setEnvironment(allowed[0]);
       }
-    }).catch(() => undefined);
-    api.recoveryToday(accessToken, currentLocalDate()).then(setReadiness).catch(() => undefined);
+    }).catch(() => undefined).finally(() => setProfileLoading(false));
+    setReadinessLoading(true); setReadinessError(false);
+    api.recoveryToday(accessToken, currentLocalDate()).then(setReadiness).catch(() => setReadinessError(true)).finally(() => setReadinessLoading(false));
   }, [accessToken]);
 
   function openProfileMenu() {
@@ -57,11 +62,11 @@ export function HomeScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView testID="home-screen" contentContainerStyle={styles.container}>
       <View style={styles.topline}>
         <View>
           <Text style={styles.eyebrow}>AI FITNESS OS</Text>
-          <Text style={styles.today}>Сегодня</Text>
+          <Text accessibilityRole="header" style={styles.today}>Сегодня</Text>
         </View>
         <Pressable
           accessibilityRole="button"
@@ -83,8 +88,8 @@ export function HomeScreen({
         style={({pressed}) => [styles.recoveryCard, pressed && styles.pressed]}>
         <View style={styles.flexShrink}>
           <Text style={styles.programKicker}>READINESS</Text>
-          <Text style={styles.recoveryTitle}>{readiness?.check_in_completed ? `${readiness.score}/100` : 'Check-in'}</Text>
-          <Text style={styles.programMeta}>{readiness?.check_in_completed ? `Объём ×${readiness.volume_multiplier.toFixed(2)} · интенсивность ×${readiness.intensity_multiplier.toFixed(2)}` : 'Сон · энергия · стресс · soreness'}</Text>
+          <Text style={styles.recoveryTitle}>{readinessLoading ? 'Считаем…' : readinessError ? 'Нет данных' : readiness?.check_in_completed ? `${readiness.score}/100` : 'Отметить состояние'}</Text>
+          <Text style={styles.programMeta}>{readinessLoading ? 'Загружаем показатели готовности' : readinessError ? 'Открой, чтобы повторить загрузку' : readiness?.check_in_completed ? `Объём ×${readiness.volume_multiplier.toFixed(2)} · интенсивность ×${readiness.intensity_multiplier.toFixed(2)}` : 'Сон · энергия · стресс · болезненность'}</Text>
         </View>
         <Text style={styles.programArrow}>→</Text>
       </Pressable>
@@ -97,7 +102,7 @@ export function HomeScreen({
         style={({pressed}) => [styles.deviceCard, pressed && styles.pressed]}>
         <View style={styles.flexShrink}>
           <Text style={styles.programKicker}>XIAOMI / HEALTH CONNECT</Text>
-          <Text style={styles.deviceTitle}>{readiness?.wearable ? 'Часы синхронизированы' : 'Подключить часы'}</Text>
+          <Text style={styles.deviceTitle}>{readinessLoading ? 'Проверяем подключение…' : readiness?.wearable ? 'Часы синхронизированы' : 'Подключить часы'}</Text>
           <Text style={styles.programMeta}>{readiness?.wearable ? `${readiness.wearable.source_label} · сон ${Math.floor(readiness.wearable.sleep_minutes/60)} ч ${readiness.wearable.sleep_minutes%60} мин` : 'Xiaomi Watch S3 · сон · шаги · тренировки'}</Text>
         </View>
         <Text style={styles.programArrow}>→</Text>
@@ -130,9 +135,10 @@ export function HomeScreen({
         <Text style={styles.programArrow}>→</Text>
       </Pressable>
 
-      <Text style={styles.title}>Что тренируем сегодня?</Text>
+      <Text accessibilityRole="header" style={styles.title}>Что тренируем сегодня?</Text>
       <Text style={styles.subtitle}>Выбери место тренировки, затем группу мышц. На следующем экране увидишь историю нагрузки и персональную тренировку.</Text>
 
+      {profileLoading ? <View accessibilityRole="progressbar" accessibilityLabel="Загрузка мест тренировки" style={styles.inlineLoading}><ActivityIndicator size="small"/><Text style={styles.programMeta}>Загружаем доступные места…</Text></View> : null}
       <View style={styles.segment} accessibilityRole="tablist">
         {environments.filter(item => allowedEnvironments.includes(item.id)).map(item => {
           const selected = environment === item.id;
@@ -141,10 +147,11 @@ export function HomeScreen({
               key={item.id}
               accessibilityRole="tab"
               accessibilityLabel={`Место тренировки: ${item.title}`}
-              accessibilityState={{selected}}
+              accessibilityState={{selected, disabled: profileLoading}}
               testID={`environment-${item.id}`}
+              disabled={profileLoading}
               onPress={() => setEnvironment(item.id)}
-              style={[styles.segmentItem, selected && styles.segmentItemActive]}>
+              style={[styles.segmentItem, selected && styles.segmentItemActive, profileLoading && styles.disabled]}>
               <Text style={[styles.segmentText, selected && styles.segmentTextActive]}>{item.title}</Text>
             </Pressable>
           );
@@ -175,7 +182,7 @@ export function HomeScreen({
 }
 
 const styles = StyleSheet.create({
-  container: {padding: spacing.lg, gap: spacing.md, backgroundColor: colors.background},
+  container: {padding: spacing.lg, paddingBottom: spacing.xl, gap: spacing.md, backgroundColor: colors.background},
   topline: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
   eyebrow: {fontSize: 11, fontWeight: '900', letterSpacing: 1.5, color: colors.textMuted},
   today: {fontSize: 26, fontWeight: '900', color: colors.text, marginTop: 2},
@@ -184,7 +191,7 @@ const styles = StyleSheet.create({
   recoveryCard: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 88},
   deviceCard: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 84, backgroundColor: '#f7f7f7'},
   deviceTitle: {fontSize: 16, fontWeight: '900', color: colors.text, marginTop: 4},
-  recoveryTitle: {fontSize: 24, fontWeight: '950', color: colors.text, marginTop: 3},
+  recoveryTitle: {fontSize: 24, fontWeight: '900', color: colors.text, marginTop: 3},
   aiCard: {backgroundColor: colors.primary, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 88},
   aiKicker: {color: colors.inverse, fontSize: 10, fontWeight: '900', letterSpacing: 1.3, opacity: 0.55},
   aiTitle: {color: colors.inverse, fontSize: 16, fontWeight: '900', marginTop: 4},
@@ -208,4 +215,6 @@ const styles = StyleSheet.create({
   cardTitle: {fontSize: 16, fontWeight: '800', color: colors.text},
   cardMeta: {fontSize: 12, color: colors.textMuted, marginTop: 8},
   pressed: {opacity: 0.7},
+  inlineLoading: {minHeight: control.minTouch, flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
+  disabled: {opacity: 0.45},
 });

@@ -13,13 +13,14 @@ Source-level gates verified here:
 - 18 migration up/down pairs + contiguous sequence ✅
 - Docker Compose parse ✅
 - mobile syntax/runtime regressions ✅
+- strict mobile TypeScript typecheck ✅
+- reproducible mobile `package-lock.json` ✅
 - Android native static/contract verifier ✅
 - passive health owner isolation regression ✅
 - auth rate-limit regression ✅
 - production JWT/store guards ✅
 
 Strict release blockers still open in this environment:
-- mobile `package-lock.json` missing because npm registry access is unavailable;
 - no local PostgreSQL/psql runtime, so the new real-DB CI gate cannot execute here;
 - no Android SDK, so native APK build cannot execute here;
 - no physical Android/Xiaomi Watch S3 device evidence.

@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {Pressable, RefreshControl, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api} from '../api/client';
 import type {FoodEntry, NutritionDay, NutritionHistoryItem} from '../api/client';
 import {AppButton} from '../components/AppButton';
@@ -13,7 +13,7 @@ function Metric({title, value, target, unit}: {title: string; value: number; tar
         <Text style={styles.metricTitle}>{title}</Text>
         <Text style={styles.metricValue}>{Math.round(value)} / {Math.round(target)} {unit}</Text>
       </View>
-      <View style={styles.track}><View style={[styles.fill, {width: `${pct}%`}]} /></View>
+      <View accessibilityRole="progressbar" accessibilityLabel={title} accessibilityValue={{min:0,max:Math.max(0,Math.round(target)),now:target>0?Math.min(Math.round(target),Math.round(value)):0,text:`${Math.round(value)} из ${Math.round(target)} ${unit}`}} style={styles.track}><View style={[styles.fill, {width: `${pct}%`}]} /></View>
     </View>
   );
 }
@@ -118,8 +118,8 @@ export function NutritionScreen({
     return (
       <ScrollView contentContainerStyle={styles.container}>
         <Pressable accessibilityRole="button" accessibilityLabel="Назад" testID="nutrition-back-loading" onPress={onBack} style={styles.backButton}><Text style={styles.back}>← Назад</Text></Pressable>
-        <Text style={styles.title}>Питание</Text>
-        <Text style={styles.muted}>{error || 'Загружаю дневник…'}</Text>
+        <Text accessibilityRole="header" style={styles.title}>Питание</Text>
+        {error ? <View style={styles.errorCard}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><AppButton label="Повторить" variant="secondary" onPress={()=>void load()}/></View> : <View style={styles.loading} accessibilityLiveRegion="polite"><ActivityIndicator color={colors.text}/><Text style={styles.muted}>Загружаем дневник…</Text></View>}
       </ScrollView>
     );
   }
@@ -137,11 +137,11 @@ export function NutritionScreen({
       </View>
 
       <Text style={styles.kicker}>FITNESS 2.0 · ПИТАНИЕ</Text>
-      <Text style={styles.title}>Сегодня</Text>
+      <Text accessibilityRole="header" style={styles.title}>Сегодня</Text>
       <View style={styles.hero}>
         <Text style={styles.heroValue}>{Math.round(day.consumed_calories)}</Text>
         <Text style={styles.heroTarget}>/ {day.profile.calorie_target} kcal</Text>
-        <Text style={styles.heroRemain}>Осталось {Math.round(day.remaining_calories)} kcal</Text>
+        <Text style={styles.heroRemain}>{day.remaining_calories >= 0 ? `Осталось ${Math.round(day.remaining_calories)} kcal` : `Выше цели на ${Math.abs(Math.round(day.remaining_calories))} kcal`}</Text>
         {day.training_day ? <Text style={styles.training}>Тренировочный день · {day.completed_workouts} трен.</Text> : null}
       </View>
 
@@ -203,6 +203,7 @@ export function NutritionScreen({
 
       <Text style={styles.section}>Последние 7 дней</Text>
       <View style={styles.history}>
+        {history.length === 0 ? <Text style={styles.historyEmpty}>Пока недостаточно записей для истории.</Text> : null}
         {history.map(item => (
           <View key={item.date} style={styles.historyRow}>
             <View><Text style={styles.historyDate}>{item.date.slice(5)}</Text><Text style={styles.historyMeta}>{item.training_day ? '● тренировочный' : 'день отдыха'}</Text></View>
@@ -223,7 +224,8 @@ const styles = StyleSheet.create({
   edit: {fontWeight: '800'},
   kicker: {fontSize: 11, fontWeight: '900', letterSpacing: 1.4, color: colors.textMuted},
   title: {fontSize: 32, fontWeight: '900'},
-  muted: {color: colors.textMuted},
+  muted: {color: colors.textMuted,lineHeight:19},
+  loading:{minHeight:100,alignItems:'center',justifyContent:'center',gap:spacing.sm},
   hero: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 18},
   heroValue: {fontSize: 44, fontWeight: '900'},
   heroTarget: {fontSize: 18, fontWeight: '800', color: colors.textMuted, marginTop: -4},
@@ -254,10 +256,12 @@ const styles = StyleSheet.create({
   undoButton: {minHeight: control.minTouch, justifyContent: 'center', paddingHorizontal: spacing.sm},
   undoAction: {color: colors.inverse, fontWeight: '900'},
   history: {borderWidth: 1, borderColor: colors.border, borderRadius: 18, overflow: 'hidden'},
+  historyEmpty:{padding:spacing.md,color:colors.textMuted,fontSize:12,lineHeight:18},
   historyRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottomWidth: StyleSheet.hairlineWidth},
   historyDate: {fontWeight: '800'},
   historyMeta: {fontSize: 10, color: colors.textMuted, marginTop: 2},
   historyCalories: {fontWeight: '800'},
   error: {fontSize: 12, fontWeight: '700', color: colors.danger},
+  errorCard:{borderWidth:1,borderColor:colors.danger,borderRadius:radius.md,padding:spacing.md,gap:spacing.sm},
   pressed: {opacity: 0.6},
 });

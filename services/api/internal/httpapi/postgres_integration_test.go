@@ -77,7 +77,7 @@ func TestPostgresCriticalReleaseFlow(t *testing.T) {
 
 	// Nutrition persistence, custom-food ownership and diary aggregation.
 	food := doJSON(t, h, http.MethodPost, "/api/v1/nutrition/foods/custom", map[string]any{
-		"name": "Release Test Yogurt", "brand": "QA", "calories_per_100g": 70, "protein_per_100g": 10, "fat_per_100g": 2, "carbs_per_100g": 4, "serving_size_g": 200,
+		"name": "Release Test Yogurt", "brand": "QA", "kcal_per_100g": 70, "protein_per_100g": 10, "fat_per_100g": 2, "carbs_per_100g": 4, "fiber_per_100g": 0, "serving_g": 200,
 	}, access)
 	if food.Code != http.StatusCreated {
 		t.Fatalf("postgres custom food=%d body=%s", food.Code, food.Body.String())

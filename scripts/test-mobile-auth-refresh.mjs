@@ -2,18 +2,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
-import {pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
-
-async function loadTypeScript() {
-  try {
-    return await import('typescript');
-  } catch {
-    const root = execFileSync('npm', ['root', '-g'], {encoding: 'utf8'}).trim();
-    return import(pathToFileURL(path.join(root, 'typescript/lib/typescript.js')).href);
-  }
-}
+import {loadTypeScript} from './load-typescript.mjs';
 
 const tsModule = await loadTypeScript();
 const ts = tsModule.default ?? tsModule;

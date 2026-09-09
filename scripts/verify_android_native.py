@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import sys
+import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -70,7 +71,7 @@ root_build = text(ANDROID / 'build.gradle')
 app_build = text(ANDROID / 'app/build.gradle')
 settings = text(ANDROID / 'settings.gradle')
 for value, needle in [
-    ('compileSdk 37', 'compileSdkVersion = 37'),
+    ('compileSdk 36', 'compileSdkVersion = 36'),
     ('targetSdk 36', 'targetSdkVersion = 36'),
     ('minSdk 24', 'minSdkVersion = 24'),
     ('Kotlin 2.2.0', 'kotlinVersion = "2.2.0"'),
@@ -173,8 +174,8 @@ require((ANDROID / 'gradlew').stat().st_mode & 0o111 != 0, 'gradlew is executabl
 jar = ANDROID / 'gradle/wrapper/gradle-wrapper.jar'
 if jar.exists():
     try:
-        listing = subprocess.check_output(['jar', 'tf', str(jar)], text=True, stderr=subprocess.STDOUT)
-        require('org/gradle/wrapper/GradleWrapperMain.class' in listing, 'Gradle wrapper JAR has GradleWrapperMain')
+        with zipfile.ZipFile(jar) as archive:
+            require('org/gradle/wrapper/GradleWrapperMain.class' in archive.namelist(), 'Gradle wrapper JAR has GradleWrapperMain')
     except Exception as exc:
         errors.append(f'cannot inspect Gradle wrapper jar: {exc}')
 

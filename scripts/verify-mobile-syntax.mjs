@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import ts from '/opt/nvm/versions/node/v22.16.0/lib/node_modules/typescript/lib/typescript.js';
+import {loadTypeScript} from './load-typescript.mjs';
+const tsModule = await loadTypeScript();
+const ts = tsModule.default ?? tsModule;
 
 const root = path.resolve('apps/mobile');
 const files = [];

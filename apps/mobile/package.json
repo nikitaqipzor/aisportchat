@@ -13,6 +13,8 @@
     "react-native-safe-area-context": "5.5.2"
   },
   "devDependencies": {
+    "@types/jest": "30.0.0",
+    "@types/react": "19.2.14",
     "@react-native-community/cli": "20.2.0",
     "@react-native-community/cli-platform-android": "20.2.0",
     "@react-native/typescript-config": "0.87.0",

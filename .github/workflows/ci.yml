@@ -75,10 +75,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
-      - name: Install Android SDK/NDK required by RN 0.87
+      - name: Install stable Android SDK/NDK required by RN 0.87
         run: |
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;27.1.12297006"
+          sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
       - name: Install mobile dependencies
         run: ./scripts/ci-mobile-install.sh
       - name: Typecheck

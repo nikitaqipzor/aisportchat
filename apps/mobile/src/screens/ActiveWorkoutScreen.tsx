@@ -5,6 +5,8 @@ import {ExerciseGuide} from '../components/ExerciseGuide';
 import {sessionStorage} from '../storage/session';
 import {restTimerNotifications} from '../native/restTimer';
 import {TechniqueWorkoutContext, techniqueKeyForExercise} from '../domain/technique';
+import {AppButton} from '../components/AppButton';
+import {colors, control, radius, spacing} from '../theme/tokens';
 
 export function ActiveWorkoutScreen({
   accessToken,
@@ -65,7 +67,7 @@ export function ActiveWorkoutScreen({
     return {done, target};
   }, [workout]);
 
-  if (!current) return null;
+  if (!current) return <View style={styles.emptyState}><Text accessibilityRole="header" style={styles.emptyTitle}>В тренировке нет упражнений</Text><Text style={styles.emptyText}>Вернись назад и создай тренировку ещё раз.</Text><AppButton label="Отменить тренировку" variant="secondary" onPress={() => { void onCancel(); }} /></View>;
 
   async function saveSet() {
     const repsValue = Number(reps);
@@ -144,9 +146,12 @@ export function ActiveWorkoutScreen({
   async function finishConfirmed() {
     try {
       setFinishing(true);
+      setError('');
       await restTimerNotifications.cancel();
       setRest(0);
       await onFinish();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось завершить тренировку.');
     } finally {
       setFinishing(false);
     }
@@ -180,7 +185,7 @@ export function ActiveWorkoutScreen({
             setCancelling(true);
             void restTimerNotifications.cancel().finally(() => {
               setRest(0);
-              void onCancel().finally(() => setCancelling(false));
+              void onCancel().catch(e => setError(e instanceof Error ? e.message : 'Не удалось отменить тренировку.')).finally(() => setCancelling(false));
             });
           },
         },
@@ -189,9 +194,10 @@ export function ActiveWorkoutScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+    <ScrollView testID="active-workout-screen" contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       <Text style={styles.eyebrow}>АКТИВНАЯ ТРЕНИРОВКА</Text>
-      <Text style={styles.progress}>{progress.done} / {progress.target} подходов</Text>
+      <Text accessibilityRole="header" style={styles.progress}>{progress.done} из {progress.target} подходов</Text>
+      <View accessibilityRole="progressbar" accessibilityValue={{min:0,max:progress.target||1,now:progress.done}} style={styles.progressTrack}><View style={[styles.progressFill,{width:`${progress.target?Math.min(100,progress.done/progress.target*100):0}%`}]} /></View>
 
       <View style={styles.card}>
         <Text style={styles.index}>{exerciseIndex + 1} / {workout.exercises.length}</Text>
@@ -200,7 +206,7 @@ export function ActiveWorkoutScreen({
           Цель: {current.workout_exercise.target_sets} × {current.workout_exercise.target_reps_min}–{current.workout_exercise.target_reps_max}
           {current.workout_exercise.target_weight ? ` · ${current.workout_exercise.target_weight} кг` : ''}
         </Text>
-        <Pressable style={styles.technique} onPress={() => setGuideOpen(true)}>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Показать технику упражнения ${current.exercise.name}`} style={({pressed})=>[styles.technique,pressed&&styles.pressed]} onPress={() => setGuideOpen(true)}>
           <Text style={styles.techniqueText}>▶ Показать технику</Text>
         </Pressable>
         {onTechnique && nextSetNumber <= current.workout_exercise.target_sets && techniqueKeyForExercise(current.exercise.id) ? <Pressable
@@ -221,15 +227,15 @@ export function ActiveWorkoutScreen({
         <View style={styles.inputs}>
           <View style={styles.field}>
             <Text style={styles.label}>Вес, кг</Text>
-            <TextInput value={weight} onChangeText={setWeight} keyboardType="decimal-pad" style={styles.input} placeholder="—" />
+            <TextInput testID="workout-weight" accessibilityLabel="Вес в килограммах" value={weight} onChangeText={setWeight} keyboardType="decimal-pad" style={styles.input} placeholder="—" placeholderTextColor={colors.textMuted} />
           </View>
           <View style={styles.field}>
             <Text style={styles.label}>Повторы</Text>
-            <TextInput value={reps} onChangeText={setReps} keyboardType="number-pad" style={styles.input} />
+            <TextInput testID="workout-reps" accessibilityLabel="Количество повторений" value={reps} onChangeText={setReps} keyboardType="number-pad" style={styles.input} />
           </View>
           <View style={styles.field}>
             <Text style={styles.label}>RIR</Text>
-            <TextInput value={rir} onChangeText={setRir} keyboardType="decimal-pad" style={styles.input} />
+            <TextInput testID="workout-rir" accessibilityLabel="Повторения в запасе, RIR" value={rir} onChangeText={setRir} keyboardType="number-pad" style={styles.input} />
           </View>
         </View>
 
@@ -240,27 +246,27 @@ export function ActiveWorkoutScreen({
           </Text>
         ))}
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {offlineNotice ? <Text style={styles.offline}>{offlineNotice}</Text> : null}
+        {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+        {offlineNotice ? <Text accessibilityRole="alert" style={styles.offline}>{offlineNotice}</Text> : null}
 
-        <Pressable style={[styles.primary, saving && styles.disabled]} onPress={saveSet} disabled={saving} accessibilityRole="button" accessibilityLabel="Завершить подход" testID="workout-save-set">
-          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryText}>ЗАВЕРШИТЬ ПОДХОД</Text>}
+        <Pressable style={[styles.primary, (saving||finishing||cancelling) && styles.disabled]} onPress={()=>void saveSet()} disabled={saving||finishing||cancelling} accessibilityRole="button" accessibilityLabel="Завершить подход" accessibilityState={{disabled:saving||finishing||cancelling,busy:saving}} testID="workout-save-set">
+          {saving ? <ActivityIndicator color={colors.inverse} /> : <Text style={styles.primaryText}>Завершить подход</Text>}
         </Pressable>
       </View>
 
       {rest > 0 ? (
         <View style={styles.restCard}>
           <Text style={styles.restLabel}>Отдых</Text>
-          <Text style={styles.restValue}>{Math.floor(rest / 60)}:{String(rest % 60).padStart(2, '0')}</Text>
-          <Pressable onPress={skipRest}><Text style={styles.skip}>Пропустить таймер</Text></Pressable>
+          <Text accessibilityLiveRegion="polite" accessibilityLabel={`Осталось отдыха ${Math.floor(rest / 60)} минут ${rest % 60} секунд`} style={styles.restValue}>{Math.floor(rest / 60)}:{String(rest % 60).padStart(2, '0')}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Пропустить таймер отдыха" onPress={skipRest} style={styles.textAction}><Text style={styles.skip}>Пропустить таймер</Text></Pressable>
         </View>
       ) : null}
 
       <View style={styles.navigation}>
-        <Pressable disabled={exerciseIndex === 0} onPress={() => setExerciseIndex(index => Math.max(0, index - 1))} style={styles.secondary}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Предыдущее упражнение" accessibilityState={{disabled:exerciseIndex===0}} disabled={exerciseIndex === 0} onPress={() => setExerciseIndex(index => Math.max(0, index - 1))} style={[styles.secondary,exerciseIndex===0&&styles.disabled]}>
           <Text style={styles.secondaryText}>← Предыдущее</Text>
         </Pressable>
-        <Pressable disabled={exerciseIndex === workout.exercises.length - 1} onPress={() => setExerciseIndex(index => Math.min(workout.exercises.length - 1, index + 1))} style={styles.secondary}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Следующее упражнение" accessibilityState={{disabled:exerciseIndex===workout.exercises.length-1}} disabled={exerciseIndex === workout.exercises.length - 1} onPress={() => setExerciseIndex(index => Math.min(workout.exercises.length - 1, index + 1))} style={[styles.secondary,exerciseIndex===workout.exercises.length-1&&styles.disabled]}>
           <Text style={styles.secondaryText}>Следующее →</Text>
         </Pressable>
       </View>
@@ -277,37 +283,38 @@ export function ActiveWorkoutScreen({
 }
 
 const styles = StyleSheet.create({
-  container: {padding: 20, gap: 14},
-  eyebrow: {fontSize: 12, letterSpacing: 1.4, fontWeight: '800'},
-  progress: {fontSize: 14, fontWeight: '700', opacity: 0.55},
-  card: {borderWidth: 1, borderRadius: 22, padding: 18, gap: 12},
-  index: {fontSize: 13, fontWeight: '700', opacity: 0.45},
-  title: {fontSize: 27, lineHeight: 32, fontWeight: '800'},
-  target: {fontSize: 15, lineHeight: 21, opacity: 0.65},
-  technique: {alignSelf: 'flex-start', borderWidth: 1, borderRadius: 12, paddingVertical: 9, paddingHorizontal: 12},
-  liveTechnique: {alignSelf: 'flex-start', backgroundColor: '#111', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 13},
-  liveTechniqueText: {color: '#fff', fontWeight: '900'},
-  techniqueText: {fontWeight: '800'},
+  container: {padding: spacing.lg,paddingBottom:spacing.xl,gap: spacing.md,backgroundColor:colors.background},
+  eyebrow: {fontSize: 12, letterSpacing: 1.4, fontWeight: '800',color:colors.textMuted},
+  progress: {fontSize: 16, fontWeight: '800',color:colors.text},progressTrack:{height:6,borderRadius:radius.pill,backgroundColor:colors.surfaceMuted,overflow:'hidden'},progressFill:{height:6,borderRadius:radius.pill,backgroundColor:colors.primary},
+  card: {borderWidth: 1,borderColor:colors.border,borderRadius: radius.lg, padding: 18, gap: 12},
+  index: {fontSize: 13, fontWeight: '700',color:colors.textMuted},
+  title: {fontSize: 27, lineHeight: 32, fontWeight: '800',color:colors.text},
+  target: {fontSize: 15, lineHeight: 21,color:colors.textMuted},
+  technique: {alignSelf: 'flex-start', borderWidth: 1,borderColor:colors.border,borderRadius: radius.md,minHeight:control.minTouch,justifyContent:'center',paddingHorizontal: 12},
+  liveTechnique: {alignSelf: 'flex-start', backgroundColor: colors.primary,borderRadius: radius.md,minHeight:control.minTouch,justifyContent:'center',paddingHorizontal: 13},
+  liveTechniqueText: {color: colors.inverse, fontWeight: '900'},
+  techniqueText: {fontWeight: '800',color:colors.text},
   inputs: {flexDirection: 'row', gap: 8},
   field: {flex: 1, gap: 6},
-  label: {fontSize: 12, fontWeight: '700', opacity: 0.55},
-  input: {borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 12, fontSize: 17, fontWeight: '700'},
-  setTitle: {fontSize: 15, fontWeight: '800', marginTop: 4},
-  savedSet: {fontSize: 14, opacity: 0.72},
-  primary: {backgroundColor: '#111', paddingVertical: 16, borderRadius: 15, alignItems: 'center'},
-  primaryText: {color: '#fff', fontWeight: '800'},
-  error: {color: '#8b1e1e'},
-  offline: {fontSize: 13, lineHeight: 18, fontWeight: '650', opacity: 0.7},
-  restCard: {borderWidth: 1, borderRadius: 20, padding: 18, alignItems: 'center', gap: 4},
-  restLabel: {fontWeight: '700', opacity: 0.55},
-  restValue: {fontSize: 42, fontWeight: '800'},
-  skip: {fontWeight: '700', marginTop: 4},
+  label: {fontSize: 12, fontWeight: '700',color:colors.textMuted},
+  input: {minHeight:control.minTouch,borderWidth: 1,borderColor:colors.border,borderRadius: radius.md,paddingHorizontal: 12,fontSize: 17, fontWeight: '700',color:colors.text},
+  setTitle: {fontSize: 15, fontWeight: '800', marginTop: 4,color:colors.text},
+  savedSet: {fontSize: 14,color:colors.textMuted},
+  primary: {backgroundColor: colors.primary,minHeight:control.buttonHeight,borderRadius: radius.md,alignItems:'center',justifyContent:'center'},
+  primaryText: {color: colors.inverse, fontWeight: '800'},
+  error: {color: colors.danger,fontWeight:'700'},
+  offline: {fontSize: 13, lineHeight: 18, fontWeight: '600',color:colors.success},
+  restCard: {borderWidth: 1,borderColor:colors.border,borderRadius: radius.lg, padding: 18, alignItems: 'center', gap: 4},
+  restLabel: {fontWeight: '700',color:colors.textMuted},
+  restValue: {fontSize: 42, fontWeight: '800',color:colors.text},
+  textAction:{minHeight:control.minTouch,justifyContent:'center'},skip: {fontWeight: '700',color:colors.text},
   navigation: {flexDirection: 'row', gap: 10},
-  secondary: {flex: 1, paddingVertical: 14, borderWidth: 1, borderRadius: 14, alignItems: 'center'},
-  secondaryText: {fontWeight: '700'},
-  finish: {paddingVertical: 15, alignItems: 'center'},
-  finishText: {fontWeight: '800', opacity: 0.65},
-  cancel: {minHeight: 48, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderRadius: 14},
-  cancelText: {fontWeight: '800', color: '#8b1e1e'},
+  secondary: {flex: 1,minHeight:control.minTouch,borderWidth: 1,borderColor:colors.border,borderRadius: radius.md,alignItems:'center',justifyContent:'center'},
+  secondaryText: {fontWeight: '700',color:colors.text},
+  finish: {minHeight:control.minTouch,alignItems:'center',justifyContent:'center'},
+  finishText: {fontWeight: '800',color:colors.textMuted},
+  cancel: {minHeight: control.minTouch,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:colors.danger,borderRadius:radius.md},
+  cancelText: {fontWeight: '800', color: colors.danger},
   disabled: {opacity: 0.5},
+  pressed:{opacity:.65},emptyState:{flex:1,justifyContent:'center',padding:spacing.lg,gap:spacing.md,backgroundColor:colors.background},emptyTitle:{fontSize:22,fontWeight:'900',color:colors.text},emptyText:{fontSize:14,lineHeight:20,color:colors.textMuted},
 });

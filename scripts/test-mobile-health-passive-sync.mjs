@@ -2,11 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
-import {pathToFileURL} from 'node:url';
 import {createRequire} from 'node:module';
+import {loadTypeScript} from './load-typescript.mjs';
 
-async function loadTypeScript(){try{return await import('typescript')}catch{const root=execFileSync('npm',['root','-g'],{encoding:'utf8'}).trim();return import(pathToFileURL(path.join(root,'typescript/lib/typescript.js')).href)}}
 const mod=await loadTypeScript();const ts=mod.default??mod;const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'fitness-health-sync-'));
 const source=fs.readFileSync('apps/mobile/src/health/sync.ts','utf8');
 const output=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText;
