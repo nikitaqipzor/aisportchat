@@ -90,7 +90,8 @@ Expected standalone APK:
 apps/mobile/android/app/build/outputs/apk/internal/app-internal.apk
 ```
 
-The internal build uses debug signing and does not require Metro. When no API
+The internal build uses debug signing, installs as the separate
+`com.aifitnessos.preview` application, and does not require Metro. When no API
 URL is supplied, it uses the reserved unreachable preview endpoint so the UI
 can open safely while server-backed actions report a network error. Pass a real
 HTTPS `AI_FITNESS_API_BASE_URL` to test authentication and synchronized flows.

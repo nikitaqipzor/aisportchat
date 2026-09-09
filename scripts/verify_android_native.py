@@ -191,7 +191,8 @@ if keystore.exists():
 api_ts = text(MOBILE / 'src/config/api.ts')
 require("!normalized.startsWith('https://')" in api_ts, 'production API URL enforces HTTPS')
 require('AI_FITNESS_API_BASE_URL' in app_build, 'Android build accepts AI_FITNESS_API_BASE_URL')
-require('internal {' in app_build and 'debuggable false' in app_build, 'standalone internal build embeds the JS bundle')
+require('internal {' in app_build and 'applicationIdSuffix ".preview"' in app_build, 'standalone preview installs with isolated app data')
+require('useDevSupport = BuildConfig.DEBUG' in text(ANDROID / 'app/src/main/java/com/aifitnessos/MainApplication.kt'), 'preview build exposes React startup diagnostics')
 require('https://preview.invalid/api/v1' in app_build, 'internal build has a safe reserved API fallback')
 require('release {\n            signingConfig signingConfigs.debug' not in app_build, 'release build does not blindly use debug signing')
 
