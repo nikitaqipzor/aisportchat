@@ -6,7 +6,9 @@ Produce an installable phone-preview APK that embeds the React Native Hermes bun
 
 ## Changes
 
-- Added an `internal` Android build type derived from debug but marked non-debuggable so the React Native Gradle plugin packages `index.android.bundle`.
+- Added an `internal` Android build type outside React Native's `debuggableVariants`, so the Gradle plugin packages `index.android.bundle` while development diagnostics remain visible.
+- Isolated the preview with application id `com.aifitnessos.preview` and a distinct app label, preventing stale debug-build data from affecting startup.
+- Wired `BuildConfig.DEBUG` explicitly into React Native dev support so a startup fault is shown instead of silently closing the process.
 - Kept debug signing for test installation and disabled cleartext traffic.
 - Added a reserved HTTPS fallback API endpoint only for builds where no server URL is supplied; this avoids a startup configuration crash without pretending that server flows are available.
 - CI now builds and uploads `app-internal.apk` as `athletica-ai-internal-apk`.
