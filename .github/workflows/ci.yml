@@ -63,7 +63,7 @@ jobs:
           node scripts/test-mobile-technique-mapping.mjs
           node scripts/test-mobile-health-passive-sync.mjs
 
-  android-debug:
+  android-internal:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -87,11 +87,11 @@ jobs:
       - name: Generate React Native Codegen
         working-directory: apps/mobile
         run: npm run android:codegen
-      - name: Assemble debug APK
+      - name: Assemble standalone internal APK
         working-directory: apps/mobile
-        run: npm run android:assemble:debug
-      - name: Upload debug APK
+        run: npm run android:assemble:internal
+      - name: Upload standalone internal APK
         uses: actions/upload-artifact@v4
         with:
-          name: ai-fitness-os-debug-apk
-          path: apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          name: athletica-ai-internal-apk
+          path: apps/mobile/android/app/build/outputs/apk/internal/app-internal.apk

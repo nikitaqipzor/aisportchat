@@ -10,6 +10,8 @@ def enableProguardInReleaseBuilds = false
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 def configuredApiBaseUrl = (project.findProperty("AI_FITNESS_API_BASE_URL") ?: System.getenv("AI_FITNESS_API_BASE_URL") ?: "").toString()
 def escapedApiBaseUrl = configuredApiBaseUrl.replace("\\", "\\\\").replace('"', '\\"')
+def internalApiBaseUrl = configuredApiBaseUrl ?: "https://preview.invalid/api/v1"
+def escapedInternalApiBaseUrl = internalApiBaseUrl.replace("\\", "\\\\").replace('"', '\\"')
 
 android {
     ndkVersion rootProject.ext.ndkVersion
@@ -53,6 +55,15 @@ android {
         debug {
             signingConfig signingConfigs.debug
             manifestPlaceholders = [usesCleartextTraffic: "true"]
+        }
+        internal {
+            initWith debug
+            debuggable false
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ["debug"]
+            versionNameSuffix "-internal"
+            buildConfigField "String", "API_BASE_URL", "\"${escapedInternalApiBaseUrl}\""
+            manifestPlaceholders = [usesCleartextTraffic: "false"]
         }
         release {
             if (signingConfigs.release.storeFile != null) {
