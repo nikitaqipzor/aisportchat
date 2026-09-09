@@ -1,0 +1,1 @@
+-- Seed expansion is intentionally retained on rollback because older workouts may reference these exercises.

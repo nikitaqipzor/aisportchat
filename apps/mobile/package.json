@@ -1,0 +1,42 @@
+{
+  "name": "ai-fitness-os-mobile",
+  "version": "0.16.0",
+  "private": true,
+  "engines": {
+    "node": ">=22.11.0"
+  },
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "3.1.1",
+    "react": "19.2.3",
+    "react-native": "0.87.0",
+    "react-native-keychain": "10.0.0",
+    "react-native-safe-area-context": "5.5.2"
+  },
+  "devDependencies": {
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-android": "20.2.0",
+    "@react-native/typescript-config": "0.87.0",
+    "typescript": "6.0.3",
+    "@react-native/babel-preset": "0.87.0",
+    "@react-native/metro-config": "0.87.0"
+  },
+  "scripts": {
+    "start": "react-native start",
+    "android": "react-native run-android",
+    "typecheck": "tsc --noEmit",
+    "android:assemble:debug": "cd android && ./gradlew assembleDebug",
+    "android:install:debug": "cd android && ./gradlew installDebug",
+    "android:bundle:release": "cd android && ./gradlew bundleRelease",
+    "android:clean": "cd android && ./gradlew clean",
+    "android:codegen": "cd android && ./gradlew generateCodegenArtifactsFromSchema"
+  },
+  "codegenConfig": {
+    "name": "AIFitnessOSSpecs",
+    "type": "modules",
+    "jsSrcsDir": "specs",
+    "android": {
+      "javaPackageName": "com.aifitnessos.specs"
+    }
+  },
+  "packageManager": "npm@10.9.2"
+}

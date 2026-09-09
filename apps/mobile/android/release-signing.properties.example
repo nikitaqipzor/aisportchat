@@ -1,0 +1,6 @@
+# Prefer environment variables in CI rather than committing passwords.
+AI_FITNESS_UPLOAD_STORE_FILE=/absolute/path/to/ai-fitness-upload.keystore
+AI_FITNESS_UPLOAD_STORE_PASSWORD=change-me
+AI_FITNESS_UPLOAD_KEY_ALIAS=ai-fitness-upload
+AI_FITNESS_UPLOAD_KEY_PASSWORD=change-me
+AI_FITNESS_API_BASE_URL=https://api.example.com/api/v1

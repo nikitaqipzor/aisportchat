@@ -1,0 +1,3486 @@
+openapi: 3.1.0
+info:
+  title: AI Fitness OS API
+  version: 1.6.1
+servers:
+- url: http://localhost:8080/api/v1
+paths:
+  /auth/register:
+    post:
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '201':
+          description: User registered
+        '409':
+          description: Email already exists
+        '429':
+          description: Too many registration attempts; Retry-After header is set
+  /auth/login:
+    post:
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AuthRequest'
+      responses:
+        '200':
+          description: Logged in
+        '401':
+          description: Invalid credentials
+        '429':
+          description: Too many login attempts; Retry-After header is set
+  /auth/refresh:
+    post:
+      operationId: refreshTokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Rotated token pair
+        '401':
+          description: Invalid refresh token
+        '429':
+          description: Too many refresh attempts; Retry-After header is set
+  /auth/logout:
+    post:
+      operationId: logout
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '204':
+          description: Logged out
+  /profile:
+    get:
+      operationId: getProfile
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: User fitness profile
+    patch:
+      operationId: updateProfile
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProfilePatch'
+      responses:
+        '200':
+          description: Updated profile
+  /profile/goal:
+    put:
+      operationId: setGoal
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GoalRequest'
+      responses:
+        '200':
+          description: Updated goal
+  /profile/training-preferences:
+    put:
+      operationId: setTrainingPreferences
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TrainingPreferencesRequest'
+      responses:
+        '200':
+          description: Updated training preferences
+  /onboarding/status:
+    get:
+      operationId: getOnboardingStatus
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Onboarding state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OnboardingStatus'
+  /onboarding/complete:
+    post:
+      operationId: completeOnboarding
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Onboarding completed
+        '409':
+          description: Required onboarding data missing
+  /muscles:
+    get:
+      operationId: listMuscles
+      responses:
+        '200':
+          description: Muscle catalog
+  /muscles/{muscle_id}/stats:
+    get:
+      operationId: getMuscleStats
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: muscle_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Aggregated training history for a muscle group
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MuscleStats'
+        '422':
+          description: Unknown muscle
+  /equipment:
+    get:
+      operationId: listEquipment
+      responses:
+        '200':
+          description: Equipment catalog
+  /recovery/today:
+    get:
+      operationId: getReadiness
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Deterministic daily readiness and per-muscle recovery status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+  /recovery/timeline:
+    get:
+      operationId: getReadinessTimeline
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Deterministic explanation of readiness factor changes and workout adaptation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessTimeline'
+  /recovery/check-in:
+    put:
+      operationId: saveRecoveryCheckIn
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCheckInRequest'
+      responses:
+        '200':
+          description: Check-in saved and readiness recalculated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+  /recovery/history:
+    get:
+      operationId: listRecoveryCheckIns
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 30
+      responses:
+        '200':
+          description: Recovery check-in history
+  /workouts/generate:
+    post:
+      operationId: generateWorkout
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateWorkoutRequest'
+      responses:
+        '201':
+          description: Generated and persisted planned workout
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '422':
+          description: Workout cannot be generated
+  /workouts/active:
+    get:
+      operationId: getActiveWorkout
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Current active workout, used to restore a session after app
+            restart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '204':
+          description: User has no active workout
+  /workouts/history:
+    get:
+      operationId: workoutHistory
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - in: query
+        name: muscle
+        schema:
+          type: string
+      - in: query
+        name: environment
+        schema:
+          type: string
+          enum:
+          - home
+          - gym
+          - band
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - planned
+          - active
+          - completed
+          - cancelled
+      - in: query
+        name: favorite
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: User workout history
+  /records:
+    get:
+      operationId: listPersonalRecords
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+          default: 50
+      responses:
+        '200':
+          description: Personal-record event history
+  /workouts/{workout_id}:
+    get:
+      operationId: getWorkout
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      responses:
+        '200':
+          description: Workout details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '404':
+          description: Workout not found
+  /workouts/{workout_id}/favorite:
+    patch:
+      operationId: setWorkoutFavorite
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - favorite
+              properties:
+                favorite:
+                  type: boolean
+      responses:
+        '200':
+          description: Favorite flag updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+  /workouts/{workout_id}/repeat:
+    post:
+      operationId: repeatWorkout
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      responses:
+        '201':
+          description: New planned workout copied from a completed workout with current
+            progression targets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '422':
+          description: Source workout is not repeatable
+  /workouts/{workout_id}/start:
+    post:
+      operationId: startWorkout
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      responses:
+        '200':
+          description: Workout started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '409':
+          description: Invalid workout state
+  /workouts/{workout_id}/sets:
+    put:
+      operationId: logWorkoutSet
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetInput'
+      responses:
+        '200':
+          description: Set saved; repeated set number updates the same set
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '409':
+          description: Workout is not active
+        '422':
+          description: Invalid set values
+  /workouts/{workout_id}/exercises/{workout_exercise_id}/replace:
+    post:
+      operationId: replaceWorkoutExercise
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      - in: path
+        name: workout_exercise_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  example: busy
+      responses:
+        '200':
+          description: Exercise replaced with a compatible alternative
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '409':
+          description: Exercise already has completed sets or workout is finished
+  /workouts/{workout_id}/finish:
+    post:
+      operationId: finishWorkout
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      responses:
+        '200':
+          description: Workout completed with volume and next-session recommendations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FinishResult'
+        '409':
+          description: Workout is not active
+  /workouts/{workout_id}/cancel:
+    post:
+      operationId: cancelWorkout
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/WorkoutId'
+      responses:
+        '200':
+          description: Planned or active workout cancelled; linked program session
+            becomes available again
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutView'
+        '409':
+          description: Workout cannot be cancelled in its current state
+  /programs/generate:
+    post:
+      operationId: generateProgram
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateProgramRequest'
+      responses:
+        '201':
+          description: Deterministic 4/8/12-week program with deload calendar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingProgram'
+        '422':
+          description: Program cannot be generated from current profile/preferences
+  /programs/active:
+    get:
+      operationId: getActiveProgram
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Active training program; overdue planned sessions are marked
+            missed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingProgram'
+        '204':
+          description: No active program
+  /programs/history:
+    get:
+      operationId: listPrograms
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 20
+      responses:
+        '200':
+          description: Program history
+  /programs/{program_id}:
+    get:
+      operationId: getProgram
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramId'
+      responses:
+        '200':
+          description: Program and its calendar sessions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrainingProgram'
+        '404':
+          description: Program not found
+  /programs/{program_id}/analytics:
+    get:
+      operationId: getProgramAnalytics
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramId'
+      responses:
+        '200':
+          description: Adherence, current week, planned/completed volume and next
+            session
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgramAnalytics'
+  /programs/{program_id}/archive:
+    post:
+      operationId: archiveProgram
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramId'
+      responses:
+        '200':
+          description: Program archived
+  /programs/sessions/{session_id}/workout:
+    post:
+      operationId: createProgramSessionWorkout
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramSessionId'
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+        description: User-local date used to combine program and recovery adaptation
+      responses:
+        '201':
+          description: Workout created and linked; program and readiness multipliers
+            are applied to actual targets
+        '200':
+          description: Existing linked workout returned idempotently
+  /programs/sessions/{session_id}/reschedule:
+    post:
+      operationId: rescheduleProgramSession
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramSessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - new_date
+              properties:
+                new_date:
+                  type: string
+                  format: date-time
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Session manually rescheduled
+  /programs/sessions/{session_id}/auto-reschedule:
+    post:
+      operationId: autoRescheduleProgramSession
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramSessionId'
+      responses:
+        '200':
+          description: Missed session moved to nearest free future day inside program
+            horizon
+  /programs/sessions/{session_id}/explain:
+    post:
+      operationId: explainProgramSessionAdaptation
+      security:
+      - bearerAuth: []
+      parameters:
+      - $ref: '#/components/parameters/ProgramSessionId'
+      responses:
+        '200':
+          description: AI explanation of deterministic deload/reschedule decision
+  /nutrition/profile:
+    get:
+      operationId: getNutritionProfile
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Current nutrition target profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionProfile'
+        '204':
+          description: Nutrition has not been configured
+    put:
+      operationId: setNutritionProfile
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NutritionProfileInput'
+      responses:
+        '200':
+          description: Calculated or manually configured nutrition targets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionProfile'
+        '422':
+          description: Invalid target configuration or body weight missing
+  /nutrition/today:
+    get:
+      operationId: getNutritionDay
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Daily calorie and macro balance with food entries and training-day
+            marker
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionDay'
+  /nutrition/history:
+    get:
+      operationId: getNutritionHistory
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 7
+      responses:
+        '200':
+          description: Daily nutrition summaries
+  /nutrition/foods:
+    get:
+      operationId: searchFoods
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: query
+        schema:
+          type: string
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 30
+      responses:
+        '200':
+          description: Searchable food catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FoodItem'
+  /nutrition/entries:
+    post:
+      operationId: logFoodEntry
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FoodEntryInput'
+      responses:
+        '201':
+          description: Food logged and daily totals recalculated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionDay'
+  /nutrition/entries/{entry_id}:
+    delete:
+      operationId: deleteFoodEntry
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: entry_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Food entry removed
+        '404':
+          description: Entry not found
+  /nutrition/foods/custom:
+    post:
+      operationId: createCustomFood
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomFoodInput'
+      responses:
+        '201':
+          description: User-owned food created
+  /nutrition/foods/barcode/{barcode}:
+    get:
+      operationId: foodByBarcode
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: barcode
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Global or user-owned food matching barcode
+        '404':
+          description: Barcode not found
+  /nutrition/entries/{entry_id}/repeat:
+    post:
+      operationId: repeatFoodEntry
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: entry_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '201':
+          description: Previous food entry repeated
+  /nutrition/recipes:
+    get:
+      operationId: listRecipes
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Saved user recipes
+    post:
+      operationId: createRecipe
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecipeInput'
+      responses:
+        '201':
+          description: Recipe created
+  /nutrition/recipes/{recipe_id}/log:
+    post:
+      operationId: logRecipe
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: recipe_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '201':
+          description: Recipe items logged into the food diary
+  /nutrition/correlation:
+    get:
+      operationId: nutritionTrainingCorrelation
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 180
+          default: 30
+      responses:
+        '200':
+          description: Aggregated nutrition comparison between training and rest days
+  /progress/measurements:
+    post:
+      operationId: logBodyMeasurement
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BodyMeasurementInput'
+      responses:
+        '201':
+          description: Body measurement saved
+    get:
+      operationId: listBodyMeasurements
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 730
+          default: 30
+      responses:
+        '200':
+          description: Measurement history
+  /progress/summary:
+    get:
+      operationId: progressSummary
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: days
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 730
+          default: 30
+      responses:
+        '200':
+          description: Weight and circumference trend summary
+  /ai/status:
+    get:
+      operationId: aiStatus
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Active AI provider and model
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIStatus'
+  /ai/food/parse:
+    post:
+      operationId: aiParseFoodText
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - text
+              properties:
+                text:
+                  type: string
+                  minLength: 2
+                  maxLength: 2000
+      responses:
+        '200':
+          description: AI draft matched against deterministic food catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIFoodDraft'
+        '422':
+          description: Food could not be parsed
+  /ai/food/photo:
+    post:
+      operationId: aiParseFoodPhoto
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - image_data_url
+              properties:
+                image_data_url:
+                  type: string
+                  description: Data URL containing an image; endpoint body limit is
+                    8 MiB
+      responses:
+        '200':
+          description: Vision draft matched against deterministic food catalog
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIFoodDraft'
+        '422':
+          description: Vision provider unavailable or food could not be detected
+  /ai/food/confirm:
+    post:
+      operationId: aiConfirmFood
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIFoodConfirmRequest'
+      responses:
+        '201':
+          description: User-confirmed foods logged using deterministic nutrition calculations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NutritionDay'
+  /ai/chat:
+    post:
+      operationId: aiCoach
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AIChatRequest'
+      responses:
+        '200':
+          description: AI Coach response with optional read-only tool calls
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIChatResponse'
+  /ai/reports/weekly:
+    get:
+      operationId: aiWeeklyReport
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Narrative report over deterministic seven-day statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AIWeeklyReport'
+  /body-scans:
+    post:
+      operationId: createBodyScan
+      security:
+      - bearerAuth: []
+      responses:
+        '201':
+          description: Draft body scan created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyScanDetails'
+    get:
+      operationId: listBodyScans
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+      responses:
+        '200':
+          description: Body scan history
+  /body-scans/comparison/latest:
+    get:
+      operationId: latestBodyScanComparison
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Capture consistency and measurement delta for latest two completed
+            scans
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyScanComparison'
+        '404':
+          description: Fewer than two completed scans
+  /body-scans/{scan_id}:
+    get:
+      operationId: getBodyScan
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: scan_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Body scan metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyScanDetails'
+    delete:
+      operationId: deleteBodyScan
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: scan_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: Metadata and private body scan images deleted
+  /body-scans/{scan_id}/photos/{view}:
+    put:
+      operationId: putBodyScanPhoto
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: scan_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: view
+        required: true
+        schema:
+          type: string
+          enum:
+          - front
+          - side
+          - back
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - image_data_url
+              properties:
+                image_data_url:
+                  type: string
+                  description: Base64 JPEG/PNG data URL
+                  maxLength: 12000000
+      responses:
+        '200':
+          description: Photo passed quality checks and was stored privately
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyScanDetails'
+        '400':
+          description: Invalid
+          dark: null
+          overexposed: null
+          low-resolution or landscape image: null
+    get:
+      operationId: getBodyScanPhoto
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: scan_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - in: path
+        name: view
+        required: true
+        schema:
+          type: string
+          enum:
+          - front
+          - side
+          - back
+      responses:
+        '200':
+          description: Private image bytes
+  /body-scans/{scan_id}/complete:
+    post:
+      operationId: completeBodyScan
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: scan_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Scan completed after front/side/back are present
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BodyScanDetails'
+        '400':
+          description: Three accepted views are required
+  /technique/exercises:
+    get:
+      operationId: techniqueExercises
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Supported exercise analyzers and current algorithm version
+  /technique/analyses:
+    post:
+      operationId: analyzeTechnique
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TechniqueAnalyzeInput'
+      responses:
+        '201':
+          description: Technique analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechniqueResult'
+        '400':
+          description: Unsupported exercise or insufficient pose quality
+    get:
+      operationId: techniqueHistory
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      responses:
+        '200':
+          description: Recent technique analyses
+  /technique/analyses/{analysis_id}:
+    get:
+      operationId: techniqueAnalysis
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: path
+        name: analysis_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Stored technique analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechniqueResult'
+        '404':
+          description: Analysis not found
+  /health/snapshots:
+    put:
+      operationId: importHealthSnapshot
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HealthSnapshotInput'
+      responses:
+        '200':
+          description: Health Connect daily snapshot imported
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthDailySnapshot'
+        '422':
+          description: Invalid health snapshot
+  /health/today:
+    get:
+      operationId: getHealthToday
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Imported daily health snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthDailySnapshot'
+        '204':
+          description: No imported snapshot
+  /health/history:
+    get:
+      operationId: listHealthHistory
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: limit
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 90
+          default: 14
+      responses:
+        '200':
+          description: Health snapshot history
+  /health/insights:
+    get:
+      operationId: getHealthInsights
+      security:
+      - bearerAuth: []
+      parameters:
+      - in: query
+        name: date
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: Personal 7/28-day wearable baselines, freshness and provenance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthInsights'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    WorkoutId:
+      in: path
+      name: workout_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProgramId:
+      in: path
+      name: program_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ProgramSessionId:
+      in: path
+      name: session_id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    RecoveryCheckInRequest:
+      type: object
+      required:
+      - date
+      - sleep_hours
+      - sleep_quality
+      - energy
+      - stress
+      - muscle_soreness
+      properties:
+        date:
+          type: string
+          format: date
+        sleep_hours:
+          type: number
+          minimum: 0
+          maximum: 16
+        sleep_quality:
+          type: integer
+          minimum: 1
+          maximum: 5
+        energy:
+          type: integer
+          minimum: 1
+          maximum: 5
+        stress:
+          type: integer
+          minimum: 1
+          maximum: 5
+        muscle_soreness:
+          type: object
+          additionalProperties:
+            type: integer
+            minimum: 1
+            maximum: 5
+        notes:
+          type: string
+    RecoveryCheckIn:
+      allOf:
+      - $ref: '#/components/schemas/RecoveryCheckInRequest'
+      - type: object
+        required:
+        - id
+        - created_at
+        - updated_at
+        properties:
+          id:
+            type: string
+            format: uuid
+          created_at:
+            type: string
+            format: date-time
+          updated_at:
+            type: string
+            format: date-time
+    RecoveryMuscleStatus:
+      type: object
+      required:
+      - muscle
+      - score
+      - status
+      - soreness
+      - recent_sets_7d
+      - recent_sets_48h
+      properties:
+        muscle:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        status:
+          type: string
+          enum:
+          - ready
+          - moderate
+          - fatigued
+        soreness:
+          type: integer
+          minimum: 1
+          maximum: 5
+        recent_sets_7d:
+          type: number
+        recent_sets_48h:
+          type: number
+        hours_since_last_workout:
+          type: integer
+          minimum: 0
+    ReadinessFactors:
+      type: object
+      required:
+      - sleep
+      - energy
+      - stress
+      - soreness
+      - training_load
+      properties:
+        sleep:
+          type: integer
+          minimum: 0
+          maximum: 100
+        energy:
+          type: integer
+          minimum: 0
+          maximum: 100
+        stress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        soreness:
+          type: integer
+          minimum: 0
+          maximum: 100
+        training_load:
+          type: integer
+          minimum: 0
+          maximum: 100
+    Readiness:
+      type: object
+      required:
+      - date
+      - check_in_completed
+      - score
+      - status
+      - factors
+      - volume_multiplier
+      - intensity_multiplier
+      - reasons
+      - muscles
+      properties:
+        date:
+          type: string
+          format: date
+        check_in_completed:
+          type: boolean
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        status:
+          type: string
+          enum:
+          - ready
+          - good
+          - moderate
+          - low
+        factors:
+          $ref: '#/components/schemas/ReadinessFactors'
+        volume_multiplier:
+          type: number
+          minimum: 0.4
+          maximum: 1.2
+        intensity_multiplier:
+          type: number
+          minimum: 0.7
+          maximum: 1.1
+        reasons:
+          type: array
+          items:
+            type: string
+        muscles:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecoveryMuscleStatus'
+        check_in:
+          $ref: '#/components/schemas/RecoveryCheckIn'
+        wearable:
+          $ref: '#/components/schemas/HealthDailySnapshot'
+        sleep_source:
+          type: string
+          enum:
+          - none
+          - check_in
+          - wearable
+        health_insights:
+          $ref: '#/components/schemas/HealthInsights'
+    ReadinessFactorImpact:
+      type: object
+      required: [key, label, today_score, weight, weighted_points, direction, message]
+      properties:
+        key:
+          type: string
+          enum: [sleep, energy, stress, soreness, training_load]
+        label: {type: string}
+        today_score: {type: integer, minimum: 0, maximum: 100}
+        previous_score: {type: integer, minimum: 0, maximum: 100}
+        weight: {type: number, minimum: 0, maximum: 1}
+        weighted_points: {type: number}
+        weighted_delta_points: {type: number}
+        direction:
+          type: string
+          enum: [up, down, stable]
+        message: {type: string}
+    ReadinessAdaptationImpact:
+      type: object
+      required: [volume_multiplier, intensity_multiplier, volume_change_percent, intensity_change_percent]
+      properties:
+        volume_multiplier: {type: number}
+        intensity_multiplier: {type: number}
+        volume_change_percent: {type: integer}
+        intensity_change_percent: {type: integer}
+    ReadinessHealthTrend:
+      type: object
+      required: [key, label, unit, affects_readiness]
+      properties:
+        key: {type: string}
+        label: {type: string}
+        unit: {type: string}
+        current: {type: number}
+        previous: {type: number}
+        baseline_7d: {type: number}
+        baseline_28d: {type: number}
+        delta_vs_7d: {type: number}
+        delta_vs_28d: {type: number}
+        affects_readiness: {type: boolean}
+    ReadinessTimeline:
+      type: object
+      required: [date, score, status, previous_date, comparison_available, factors, health_trends, adaptation, summary]
+      properties:
+        date: {type: string, format: date}
+        score: {type: integer, minimum: 0, maximum: 100}
+        status:
+          type: string
+          enum: [ready, good, moderate, low]
+        previous_date: {type: string, format: date}
+        previous_score: {type: integer, minimum: 0, maximum: 100}
+        score_delta: {type: integer}
+        comparison_available: {type: boolean}
+        factors:
+          type: array
+          items: {$ref: '#/components/schemas/ReadinessFactorImpact'}
+        health_trends:
+          type: array
+          items: {$ref: '#/components/schemas/ReadinessHealthTrend'}
+        adaptation: {$ref: '#/components/schemas/ReadinessAdaptationImpact'}
+        summary:
+          type: array
+          items: {type: string}
+    PoseLandmark:
+      type: object
+      required:
+      - x
+      - y
+      - z
+      - visibility
+      properties:
+        x:
+          type: number
+        y:
+          type: number
+        z:
+          type: number
+        visibility:
+          type: number
+          minimum: 0
+          maximum: 1
+    PoseFrame:
+      type: object
+      required:
+      - timestamp_ms
+      - landmarks
+      properties:
+        timestamp_ms:
+          type: integer
+          minimum: 0
+        landmarks:
+          type: array
+          minItems: 33
+          maxItems: 33
+          items:
+            $ref: '#/components/schemas/PoseLandmark'
+    TechniqueAnalyzeInput:
+      type: object
+      required:
+      - exercise_key
+      - duration_ms
+      - frames
+      properties:
+        exercise_key:
+          type: string
+          enum:
+          - squat
+          - biceps_curl
+          - push_up
+          - lunge
+          - shoulder_press
+        capture_mode:
+          type: string
+          enum:
+          - recorded
+          - live
+          default: recorded
+        workout_id:
+          type: string
+          format: uuid
+        workout_exercise_id:
+          type: string
+          format: uuid
+        set_number:
+          type: integer
+          minimum: 1
+          maximum: 100
+        duration_ms:
+          type: integer
+          minimum: 1
+          maximum: 90000
+        frames:
+          type: array
+          minItems: 8
+          maxItems: 1200
+          items:
+            $ref: '#/components/schemas/PoseFrame'
+    TechniqueRepMetric:
+      type: object
+      required:
+      - number
+      - start_ms
+      - end_ms
+      - duration_ms
+      - eccentric_ms
+      - concentric_ms
+      - rom_degrees
+      properties:
+        number:
+          type: integer
+        start_ms:
+          type: integer
+        end_ms:
+          type: integer
+        duration_ms:
+          type: integer
+        eccentric_ms:
+          type: integer
+        concentric_ms:
+          type: integer
+        rom_degrees:
+          type: number
+        left_rom_degrees:
+          type: number
+        right_rom_degrees:
+          type: number
+        symmetry_delta_degrees:
+          type: number
+    TechniqueResult:
+      type: object
+      required:
+      - id
+      - exercise_key
+      - exercise_name
+      - capture_mode
+      - rep_count
+      - technique_score
+      - rom_score
+      - tempo_score
+      - symmetry_score
+      - stability_score
+      - confidence
+      - duration_ms
+      - average_eccentric_ms
+      - average_concentric_ms
+      - average_rep_rpm
+      - algorithm_version
+      - reps
+      - feedback
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        exercise_key:
+          type: string
+        exercise_name:
+          type: string
+        capture_mode:
+          type: string
+          enum:
+          - recorded
+          - live
+        workout_id:
+          type: string
+          format: uuid
+        workout_exercise_id:
+          type: string
+          format: uuid
+        set_number:
+          type: integer
+        rep_count:
+          type: integer
+        technique_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        rom_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        tempo_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        symmetry_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        stability_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        duration_ms:
+          type: integer
+        average_eccentric_ms:
+          type: integer
+        average_concentric_ms:
+          type: integer
+        average_rep_rpm:
+          type: number
+        algorithm_version:
+          type: string
+        reps:
+          type: array
+          items:
+            $ref: '#/components/schemas/TechniqueRepMetric'
+        feedback:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+    BodyScan:
+      type: object
+      required:
+      - id
+      - status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - draft
+          - completed
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+    BodyScanPhoto:
+      type: object
+      required:
+      - id
+      - scan_id
+      - view
+      - mime_type
+      - width
+      - height
+      - bytes
+      - brightness
+      - contrast
+      - quality_status
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        scan_id:
+          type: string
+          format: uuid
+        view:
+          type: string
+          enum:
+          - front
+          - side
+          - back
+        mime_type:
+          type: string
+          enum:
+          - image/jpeg
+          - image/png
+        width:
+          type: integer
+        height:
+          type: integer
+        bytes:
+          type: integer
+        brightness:
+          type: number
+        contrast:
+          type: number
+        quality_status:
+          type: string
+          enum:
+          - accepted
+          - warning
+        quality_issues:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+    BodyScanDetails:
+      type: object
+      required:
+      - scan
+      - photos
+      properties:
+        scan:
+          $ref: '#/components/schemas/BodyScan'
+        photos:
+          type: array
+          items:
+            $ref: '#/components/schemas/BodyScanPhoto'
+    BodyScanComparison:
+      type: object
+      required:
+      - from_scan_id
+      - to_scan_id
+      - days_between
+      - capture_consistency_score
+      - lighting_delta
+      - visual_cv_status
+      properties:
+        from_scan_id:
+          type: string
+          format: uuid
+        to_scan_id:
+          type: string
+          format: uuid
+        days_between:
+          type: integer
+        capture_consistency_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        lighting_delta:
+          type: number
+        warnings:
+          type: array
+          items:
+            type: string
+        weight_delta_kg:
+          type: number
+        waist_delta_cm:
+          type: number
+        visual_cv_status:
+          type: string
+          example: pending_pose_engine
+    GenerateProgramRequest:
+      type: object
+      required:
+      - weeks
+      properties:
+        weeks:
+          type: integer
+          enum:
+          - 4
+          - 8
+          - 12
+        workouts_per_week:
+          type: integer
+          minimum: 1
+          maximum: 7
+        environment:
+          type: string
+          enum:
+          - home
+          - gym
+          - band
+        start_date:
+          type: string
+          format: date-time
+    ProgramHeader:
+      type: object
+      required:
+      - id
+      - title
+      - goal_type
+      - weeks
+      - workouts_per_week
+      - environment
+      - status
+      - start_date
+      - created_at
+      - updated_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        goal_type:
+          type: string
+        weeks:
+          type: integer
+          enum:
+          - 4
+          - 8
+          - 12
+        workouts_per_week:
+          type: integer
+          minimum: 1
+          maximum: 7
+        environment:
+          type: string
+          enum:
+          - home
+          - gym
+          - band
+        status:
+          type: string
+          enum:
+          - active
+          - completed
+          - archived
+        start_date:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProgramSession:
+      type: object
+      required:
+      - id
+      - program_id
+      - week_number
+      - day_index
+      - planned_date
+      - original_date
+      - muscle
+      - environment
+      - status
+      - is_deload
+      - volume_multiplier
+      - intensity_multiplier
+      - planned_sets
+      properties:
+        id:
+          type: string
+          format: uuid
+        program_id:
+          type: string
+          format: uuid
+        week_number:
+          type: integer
+        day_index:
+          type: integer
+        planned_date:
+          type: string
+          format: date-time
+        original_date:
+          type: string
+          format: date-time
+        muscle:
+          type: string
+        secondary_muscle:
+          type: string
+        environment:
+          type: string
+          enum:
+          - home
+          - gym
+          - band
+        status:
+          type: string
+          enum:
+          - planned
+          - rescheduled
+          - missed
+          - completed
+          - skipped
+        workout_id:
+          type: string
+          format: uuid
+        completed_at:
+          type: string
+          format: date-time
+        is_deload:
+          type: boolean
+        volume_multiplier:
+          type: number
+        intensity_multiplier:
+          type: number
+        planned_sets:
+          type: integer
+        adaptation_reason:
+          type: string
+    TrainingProgram:
+      type: object
+      required:
+      - program
+      - sessions
+      properties:
+        program:
+          $ref: '#/components/schemas/ProgramHeader'
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgramSession'
+    ProgramAnalytics:
+      type: object
+      required:
+      - program_id
+      - planned_sessions
+      - completed_sessions
+      - missed_sessions
+      - rescheduled_sessions
+      - upcoming_sessions
+      - deload_sessions
+      - adherence_percent
+      - current_week
+      - total_weeks
+      - planned_sets_by_muscle
+      - completed_sets_by_muscle
+      properties:
+        program_id:
+          type: string
+          format: uuid
+        planned_sessions:
+          type: integer
+        completed_sessions:
+          type: integer
+        missed_sessions:
+          type: integer
+        rescheduled_sessions:
+          type: integer
+        upcoming_sessions:
+          type: integer
+        deload_sessions:
+          type: integer
+        adherence_percent:
+          type: number
+        current_week:
+          type: integer
+        total_weeks:
+          type: integer
+        planned_sets_by_muscle:
+          type: object
+          additionalProperties:
+            type: integer
+        completed_sets_by_muscle:
+          type: object
+          additionalProperties:
+            type: integer
+        next_session:
+          $ref: '#/components/schemas/ProgramSession'
+    AIStatus:
+      type: object
+      required:
+      - provider
+      - model
+      properties:
+        provider:
+          type: string
+        model:
+          type: string
+    AIFoodDraftItem:
+      type: object
+      required:
+      - name
+      - quantity_g
+      - confidence
+      - match_quality
+      properties:
+        name:
+          type: string
+        quantity_g:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 5000
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        notes:
+          type: string
+        matched_food:
+          $ref: '#/components/schemas/FoodItem'
+        match_quality:
+          type: string
+          enum:
+          - catalog_match
+          - unmatched
+        estimated_calories:
+          type: number
+        estimated_protein_g:
+          type: number
+        estimated_fat_g:
+          type: number
+        estimated_carbs_g:
+          type: number
+    AIFoodDraft:
+      type: object
+      required:
+      - source
+      - items
+      properties:
+        source:
+          type: string
+          enum:
+          - text
+          - image
+        text:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AIFoodDraftItem'
+        warning:
+          type: string
+    AIFoodConfirmRequest:
+      type: object
+      required:
+      - meal_type
+      - items
+      properties:
+        meal_type:
+          type: string
+          enum:
+          - breakfast
+          - lunch
+          - dinner
+          - snack
+        logged_at:
+          type: string
+          format: date-time
+        items:
+          type: array
+          minItems: 1
+          maxItems: 20
+          items:
+            type: object
+            required:
+            - food_id
+            - quantity_g
+            properties:
+              food_id:
+                type: string
+              quantity_g:
+                type: number
+                exclusiveMinimum: 0
+                maximum: 5000
+    AIChatMessage:
+      type: object
+      required:
+      - role
+      - content
+      properties:
+        role:
+          type: string
+          enum:
+          - user
+          - assistant
+        content:
+          type: string
+    AIChatRequest:
+      type: object
+      required:
+      - message
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        history:
+          type: array
+          maxItems: 12
+          items:
+            $ref: '#/components/schemas/AIChatMessage'
+    AIChatResponse:
+      type: object
+      required:
+      - message
+      - model
+      - provider
+      properties:
+        message:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        tool_calls:
+          type: array
+          items:
+            type: string
+    AIWeeklyStats:
+      type: object
+      required:
+      - from_date
+      - to_date
+      - completed_workouts
+      - training_volume
+      - logged_nutrition_days
+      - avg_calories
+      - avg_protein_g
+      - new_prs
+      properties:
+        from_date:
+          type: string
+          format: date
+        to_date:
+          type: string
+          format: date
+        completed_workouts:
+          type: integer
+        training_volume:
+          type: number
+        logged_nutrition_days:
+          type: integer
+        avg_calories:
+          type: number
+        avg_protein_g:
+          type: number
+        calorie_target:
+          type: integer
+        protein_target_g:
+          type: number
+        weight_start_kg:
+          type: number
+        weight_current_kg:
+          type: number
+        weight_delta_kg:
+          type: number
+        new_prs:
+          type: integer
+        recovery_checkin_days:
+          type: integer
+        avg_readiness:
+          type: number
+          minimum: 0
+          maximum: 100
+    AIWeeklyReport:
+      type: object
+      required:
+      - stats
+      - summary
+      - wins
+      - focus
+      - next_actions
+      - model
+      - provider
+      properties:
+        stats:
+          $ref: '#/components/schemas/AIWeeklyStats'
+        summary:
+          type: string
+        wins:
+          type: array
+          items:
+            type: string
+        focus:
+          type: array
+          items:
+            type: string
+        next_actions:
+          type: array
+          items:
+            type: string
+        model:
+          type: string
+        provider:
+          type: string
+    CustomFoodInput:
+      type: object
+      required:
+      - name
+      - kcal_per_100g
+      - protein_per_100g
+      - fat_per_100g
+      - carbs_per_100g
+      - fiber_per_100g
+      - serving_g
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        brand:
+          type: string
+        barcode:
+          type: string
+        kcal_per_100g:
+          type: number
+          minimum: 0
+          maximum: 1000
+        protein_per_100g:
+          type: number
+          minimum: 0
+          maximum: 100
+        fat_per_100g:
+          type: number
+          minimum: 0
+          maximum: 100
+        carbs_per_100g:
+          type: number
+          minimum: 0
+          maximum: 100
+        fiber_per_100g:
+          type: number
+          minimum: 0
+          maximum: 100
+        serving_g:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 5000
+    RecipeInput:
+      type: object
+      required:
+      - name
+      - items
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 120
+        items:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items:
+            type: object
+            required:
+            - food_id
+            - quantity_g
+            properties:
+              food_id:
+                type: string
+              quantity_g:
+                type: number
+                exclusiveMinimum: 0
+                maximum: 5000
+    BodyMeasurementInput:
+      type: object
+      properties:
+        logged_at:
+          type: string
+          format: date-time
+        weight_kg:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        waist_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        chest_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        shoulder_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        arm_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        forearm_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        hip_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        thigh_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        calf_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+        neck_cm:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 400
+    NutritionProfileInput:
+      type: object
+      required:
+      - goal
+      - activity_level
+      - calculation_mode
+      properties:
+        goal:
+          type: string
+          enum:
+          - lose
+          - recomp
+          - maintain
+          - gain
+          - strength
+          - endurance
+        activity_level:
+          type: string
+          enum:
+          - low
+          - light
+          - moderate
+          - high
+          - athlete
+        calculation_mode:
+          type: string
+          enum:
+          - auto
+          - manual
+        calorie_target:
+          type: integer
+          minimum: 800
+          maximum: 8000
+        protein_target_g:
+          type: number
+          minimum: 0
+        fat_target_g:
+          type: number
+          minimum: 0
+        carb_target_g:
+          type: number
+          minimum: 0
+    NutritionProfile:
+      type: object
+      required:
+      - user_id
+      - goal
+      - activity_level
+      - calculation_mode
+      - calorie_target
+      - protein_target_g
+      - fat_target_g
+      - carb_target_g
+      - updated_at
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        goal:
+          type: string
+        activity_level:
+          type: string
+        calculation_mode:
+          type: string
+          enum:
+          - auto
+          - manual
+        calorie_target:
+          type: integer
+        protein_target_g:
+          type: number
+        fat_target_g:
+          type: number
+        carb_target_g:
+          type: number
+        updated_at:
+          type: string
+          format: date-time
+    FoodItem:
+      type: object
+      required:
+      - id
+      - name
+      - kcal_per_100g
+      - protein_per_100g
+      - fat_per_100g
+      - carbs_per_100g
+      - fiber_per_100g
+      - serving_g
+      - source
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        brand:
+          type: string
+        barcode:
+          type: string
+        kcal_per_100g:
+          type: number
+        protein_per_100g:
+          type: number
+        fat_per_100g:
+          type: number
+        carbs_per_100g:
+          type: number
+        fiber_per_100g:
+          type: number
+        serving_g:
+          type: number
+        source:
+          type: string
+    FoodEntryInput:
+      type: object
+      required:
+      - food_id
+      - meal_type
+      - quantity_g
+      properties:
+        food_id:
+          type: string
+        meal_type:
+          type: string
+          enum:
+          - breakfast
+          - lunch
+          - dinner
+          - snack
+        quantity_g:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 5000
+        logged_at:
+          type: string
+          format: date-time
+    FoodEntry:
+      type: object
+      required:
+      - id
+      - food_id
+      - food_name
+      - meal_type
+      - logged_at
+      - quantity_g
+      - calories
+      - protein_g
+      - fat_g
+      - carbs_g
+      - fiber_g
+      properties:
+        id:
+          type: string
+          format: uuid
+        food_id:
+          type: string
+        food_name:
+          type: string
+        meal_type:
+          type: string
+          enum:
+          - breakfast
+          - lunch
+          - dinner
+          - snack
+        logged_at:
+          type: string
+          format: date-time
+        quantity_g:
+          type: number
+        calories:
+          type: number
+        protein_g:
+          type: number
+        fat_g:
+          type: number
+        carbs_g:
+          type: number
+        fiber_g:
+          type: number
+    NutritionDay:
+      type: object
+      required:
+      - date
+      - profile
+      - consumed_calories
+      - consumed_protein_g
+      - consumed_fat_g
+      - consumed_carbs_g
+      - consumed_fiber_g
+      - remaining_calories
+      - remaining_protein_g
+      - remaining_fat_g
+      - remaining_carbs_g
+      - entries
+      - training_day
+      - completed_workouts
+      properties:
+        date:
+          type: string
+          format: date
+        profile:
+          $ref: '#/components/schemas/NutritionProfile'
+        consumed_calories:
+          type: number
+        consumed_protein_g:
+          type: number
+        consumed_fat_g:
+          type: number
+        consumed_carbs_g:
+          type: number
+        consumed_fiber_g:
+          type: number
+        remaining_calories:
+          type: number
+        remaining_protein_g:
+          type: number
+        remaining_fat_g:
+          type: number
+        remaining_carbs_g:
+          type: number
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/FoodEntry'
+        training_day:
+          type: boolean
+        completed_workouts:
+          type: integer
+    AuthRequest:
+      type: object
+      required:
+      - email
+      - password
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+    ProfilePatch:
+      type: object
+      properties:
+        birth_date:
+          type: string
+          format: date
+        gender:
+          type: string
+        height_cm:
+          type: number
+          minimum: 100
+          maximum: 250
+        weight_kg:
+          type: number
+          minimum: 30
+          maximum: 400
+        experience_level:
+          type: string
+          enum:
+          - beginner
+          - intermediate
+          - advanced
+        unit_system:
+          type: string
+          enum:
+          - metric
+          - imperial
+    GoalRequest:
+      type: object
+      required:
+      - goal_type
+      properties:
+        goal_type:
+          type: string
+          enum:
+          - muscle_gain
+          - fat_loss
+          - recomposition
+          - strength
+          - maintenance
+          - endurance
+        target_weight_kg:
+          type: number
+          minimum: 30
+          maximum: 400
+    TrainingPreferencesRequest:
+      type: object
+      required:
+      - environments
+      - equipment_ids
+      - workouts_per_week
+      - session_minutes
+      properties:
+        environments:
+          type: array
+          minItems: 1
+          items:
+            type: string
+            enum:
+            - home
+            - gym
+            - band
+        equipment_ids:
+          type: array
+          items:
+            type: string
+        local_date:
+          type: string
+          format: date
+          description: User-local date used for readiness adaptation
+        workouts_per_week:
+          type: integer
+          minimum: 1
+          maximum: 14
+        session_minutes:
+          type: integer
+          minimum: 10
+          maximum: 180
+    OnboardingStatus:
+      type: object
+      required:
+      - profile_completed
+      - goal_completed
+      - training_completed
+      - completed
+      properties:
+        profile_completed:
+          type: boolean
+        goal_completed:
+          type: boolean
+        training_completed:
+          type: boolean
+        completed:
+          type: boolean
+    GenerateWorkoutRequest:
+      type: object
+      required:
+      - muscle
+      - environment
+      properties:
+        muscle:
+          type: string
+          example: back
+        environment:
+          type: string
+          enum:
+          - home
+          - gym
+          - band
+        duration_minutes:
+          type: integer
+          minimum: 10
+          maximum: 180
+        level:
+          type: string
+          enum:
+          - beginner
+          - intermediate
+          - advanced
+        equipment_ids:
+          type: array
+          items:
+            type: string
+    WorkoutHeader:
+      type: object
+      required:
+      - id
+      - muscle
+      - environment
+      - status
+      - duration_minutes
+      - total_volume
+      - completion_percent
+      - ended_early
+      - favorite
+      - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        muscle:
+          type: string
+        environment:
+          type: string
+          enum:
+          - home
+          - gym
+          - band
+        status:
+          type: string
+          enum:
+          - planned
+          - active
+          - completed
+          - cancelled
+        duration_minutes:
+          type: integer
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        duration_seconds:
+          type: integer
+        total_volume:
+          type: number
+        completion_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        ended_early:
+          type: boolean
+        favorite:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    Exercise:
+      type: object
+      required:
+      - id
+      - name
+      - primary_muscle
+      - environment
+      - equipment
+      - difficulty
+      - movement_pattern
+      - compound
+      - default_sets
+      - rep_min
+      - rep_max
+      - rest_seconds
+      - description
+      - instructions
+      - common_mistakes
+      - technique_tips
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        primary_muscle:
+          type: string
+        secondary_muscles:
+          type: array
+          items:
+            type: string
+        environment:
+          type: array
+          items:
+            type: string
+        equipment:
+          type: array
+          items:
+            type: string
+        difficulty:
+          type: string
+        movement_pattern:
+          type: string
+        compound:
+          type: boolean
+        default_sets:
+          type: integer
+        rep_min:
+          type: integer
+        rep_max:
+          type: integer
+        rest_seconds:
+          type: integer
+        description:
+          type: string
+        instructions:
+          type: array
+          items:
+            type: string
+        common_mistakes:
+          type: array
+          items:
+            type: string
+        technique_tips:
+          type: array
+          items:
+            type: string
+    WorkoutExercise:
+      type: object
+      required:
+      - id
+      - workout_id
+      - exercise_id
+      - position
+      - target_sets
+      - target_reps_min
+      - target_reps_max
+      - rest_seconds
+      properties:
+        id:
+          type: string
+          format: uuid
+        workout_id:
+          type: string
+          format: uuid
+        exercise_id:
+          type: string
+        position:
+          type: integer
+        target_sets:
+          type: integer
+        target_reps_min:
+          type: integer
+        target_reps_max:
+          type: integer
+        target_weight:
+          type: number
+        rest_seconds:
+          type: integer
+        progression_note:
+          type: string
+    WorkoutSet:
+      type: object
+      required:
+      - id
+      - workout_exercise_id
+      - set_number
+      - repetitions
+      properties:
+        id:
+          type: string
+          format: uuid
+        workout_exercise_id:
+          type: string
+          format: uuid
+        set_number:
+          type: integer
+        weight:
+          type: number
+        repetitions:
+          type: integer
+        rpe:
+          type: number
+        rir:
+          type: number
+        completed_at:
+          type: string
+          format: date-time
+    ExerciseView:
+      type: object
+      required:
+      - workout_exercise
+      - exercise
+      - sets
+      properties:
+        workout_exercise:
+          $ref: '#/components/schemas/WorkoutExercise'
+        exercise:
+          $ref: '#/components/schemas/Exercise'
+        sets:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkoutSet'
+    WorkoutView:
+      type: object
+      required:
+      - workout
+      - exercises
+      - personal_records
+      properties:
+        workout:
+          $ref: '#/components/schemas/WorkoutHeader'
+        exercises:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExerciseView'
+        personal_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonalRecord'
+    PersonalRecord:
+      type: object
+      required:
+      - id
+      - workout_id
+      - exercise_id
+      - record_type
+      - value
+      - achieved_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        workout_id:
+          type: string
+          format: uuid
+        workout_set_id:
+          type: string
+          format: uuid
+        exercise_id:
+          type: string
+        record_type:
+          type: string
+          enum:
+          - max_weight
+          - max_reps
+          - estimated_1rm
+        value:
+          type: number
+        previous_value:
+          type: number
+        achieved_at:
+          type: string
+          format: date-time
+    MuscleStats:
+      type: object
+      required:
+      - muscle
+      - completed_workouts
+      - total_sets
+      - total_volume
+      - recent_volume
+      - last_workout_volume
+      - personal_records_count
+      properties:
+        muscle:
+          type: string
+        completed_workouts:
+          type: integer
+        total_sets:
+          type: integer
+        total_volume:
+          type: number
+        recent_volume:
+          type: number
+        last_workout_volume:
+          type: number
+        last_workout_at:
+          type: string
+          format: date-time
+        days_since_last_workout:
+          type: integer
+          minimum: 0
+        personal_records_count:
+          type: integer
+    SetInput:
+      type: object
+      required:
+      - workout_exercise_id
+      - set_number
+      - repetitions
+      properties:
+        workout_exercise_id:
+          type: string
+          format: uuid
+        set_number:
+          type: integer
+          minimum: 1
+        weight:
+          type: number
+          minimum: 0
+          maximum: 1000
+        repetitions:
+          type: integer
+          minimum: 1
+          maximum: 200
+        rpe:
+          type: number
+          minimum: 1
+          maximum: 10
+        rir:
+          type: number
+          minimum: 0
+          maximum: 10
+    ProgressionRecommendation:
+      type: object
+      required:
+      - exercise_id
+      - exercise_name
+      - message
+      properties:
+        exercise_id:
+          type: string
+        exercise_name:
+          type: string
+        current_weight:
+          type: number
+        next_weight:
+          type: number
+        message:
+          type: string
+    FinishResult:
+      type: object
+      required:
+      - workout
+      - next_recommendations
+      - personal_records
+      properties:
+        workout:
+          $ref: '#/components/schemas/WorkoutView'
+        personal_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/PersonalRecord'
+        next_recommendations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProgressionRecommendation'
+    HealthSnapshotInput:
+      type: object
+      required:
+      - date
+      - provider
+      - source_package
+      - steps
+      - distance_m
+      - active_calories_kcal
+      - sleep_minutes
+      - deep_sleep_minutes
+      - light_sleep_minutes
+      - rem_sleep_minutes
+      - awake_minutes
+      - exercise_minutes
+      - exercise_sessions
+      - data_types
+      - captured_at
+      properties:
+        date: &id001
+          type: string
+          format: date
+        provider: &id002
+          type: string
+          enum:
+          - health_connect
+        source_package: &id003
+          type: string
+        source_label: &id004
+          type: string
+        steps: &id005
+          type: integer
+          minimum: 0
+        distance_m: &id006
+          type: number
+          minimum: 0
+        active_calories_kcal: &id007
+          type: number
+          minimum: 0
+        sleep_minutes: &id008
+          type: integer
+          minimum: 0
+          maximum: 1440
+        deep_sleep_minutes: &id009
+          type: integer
+          minimum: 0
+          maximum: 1440
+        light_sleep_minutes: &id010
+          type: integer
+          minimum: 0
+          maximum: 1440
+        rem_sleep_minutes: &id011
+          type: integer
+          minimum: 0
+          maximum: 1440
+        awake_minutes: &id012
+          type: integer
+          minimum: 0
+          maximum: 1440
+        exercise_minutes: &id013
+          type: integer
+          minimum: 0
+          maximum: 1440
+        exercise_sessions: &id014
+          type: integer
+          minimum: 0
+        exercise_heart_rate_avg: &id015
+          type: number
+          minimum: 20
+          maximum: 260
+        exercise_heart_rate_max: &id016
+          type: number
+          minimum: 20
+          maximum: 260
+        resting_heart_rate: &id017
+          type: number
+          minimum: 20
+          maximum: 260
+        data_types: &id018
+          type: array
+          items:
+            type: string
+            enum:
+            - steps
+            - distance
+            - active_calories
+            - sleep
+            - exercise
+            - heart_rate
+            - resting_heart_rate
+        captured_at: &id019
+          type: string
+          format: date-time
+    HealthDailySnapshot:
+      type: object
+      required:
+      - id
+      - date
+      - provider
+      - source_package
+      - source_label
+      - steps
+      - distance_m
+      - active_calories_kcal
+      - sleep_minutes
+      - deep_sleep_minutes
+      - light_sleep_minutes
+      - rem_sleep_minutes
+      - awake_minutes
+      - exercise_minutes
+      - exercise_sessions
+      - data_types
+      - captured_at
+      - imported_at
+      properties:
+        date: *id001
+        provider: *id002
+        source_package: *id003
+        source_label: *id004
+        steps: *id005
+        distance_m: *id006
+        active_calories_kcal: *id007
+        sleep_minutes: *id008
+        deep_sleep_minutes: *id009
+        light_sleep_minutes: *id010
+        rem_sleep_minutes: *id011
+        awake_minutes: *id012
+        exercise_minutes: *id013
+        exercise_sessions: *id014
+        exercise_heart_rate_avg: *id015
+        exercise_heart_rate_max: *id016
+        resting_heart_rate: *id017
+        data_types: *id018
+        captured_at: *id019
+        id:
+          type: string
+          format: uuid
+        imported_at:
+          type: string
+          format: date-time
+    HealthBaselineMetric:
+      type: object
+      required:
+      - average
+      - sample_days
+      - unit
+      properties:
+        average:
+          type: number
+        sample_days:
+          type: integer
+          minimum: 0
+        unit:
+          type: string
+    HealthBaselineWindow:
+      type: object
+      required:
+      - window_days
+      - available_days
+      - coverage_percent
+      properties:
+        window_days:
+          type: integer
+        available_days:
+          type: integer
+          minimum: 0
+        coverage_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        sleep_minutes:
+          $ref: '#/components/schemas/HealthBaselineMetric'
+        steps:
+          $ref: '#/components/schemas/HealthBaselineMetric'
+        active_calories_kcal:
+          $ref: '#/components/schemas/HealthBaselineMetric'
+        exercise_minutes:
+          $ref: '#/components/schemas/HealthBaselineMetric'
+        resting_heart_rate:
+          $ref: '#/components/schemas/HealthBaselineMetric'
+    HealthMetricDeviation:
+      type: object
+      required:
+      - current
+      - baseline
+      - delta
+      - delta_percent
+      - unit
+      properties:
+        current:
+          type: number
+        baseline:
+          type: number
+        delta:
+          type: number
+        delta_percent:
+          type: number
+        unit:
+          type: string
+    HealthFreshness:
+      type: object
+      required:
+      - status
+      - sync_age_minutes
+      properties:
+        status:
+          type: string
+          enum:
+          - fresh
+          - aging
+          - stale
+          - missing
+        sync_age_minutes:
+          type: integer
+          minimum: 0
+        captured_at:
+          type: string
+          format: date-time
+        imported_at:
+          type: string
+          format: date-time
+    HealthMetricProvenance:
+      type: object
+      required:
+      - metric
+      - available
+      properties:
+        metric:
+          type: string
+        available:
+          type: boolean
+        source_package:
+          type: string
+        source_label:
+          type: string
+    HealthInsights:
+      type: object
+      required:
+      - date
+      - baseline_7d
+      - baseline_28d
+      - deviations
+      - freshness
+      - provenance
+      - confidence
+      - confidence_percent
+      - reasons
+      - sources
+      - conflict_resolved
+      properties:
+        date:
+          type: string
+          format: date
+        snapshot:
+          $ref: '#/components/schemas/HealthDailySnapshot'
+        baseline_7d:
+          $ref: '#/components/schemas/HealthBaselineWindow'
+        baseline_28d:
+          $ref: '#/components/schemas/HealthBaselineWindow'
+        deviations:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/HealthMetricDeviation'
+        freshness:
+          $ref: '#/components/schemas/HealthFreshness'
+        provenance:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthMetricProvenance'
+        confidence:
+          type: string
+          enum:
+          - low
+          - medium
+          - high
+        confidence_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        reasons:
+          type: array
+          items:
+            type: string
+        sources:
+          type: array
+          items:
+            $ref: '#/components/schemas/HealthSourceCandidate'
+        conflict_resolved:
+          type: boolean
+    HealthSourceCandidate:
+      type: object
+      required:
+      - source_package
+      - source_label
+      - selected
+      - imported_at
+      - data_types
+      properties:
+        source_package:
+          type: string
+        source_label:
+          type: string
+        selected:
+          type: boolean
+        imported_at:
+          type: string
+          format: date-time
+        data_types:
+          type: array
+          items:
+            type: string
