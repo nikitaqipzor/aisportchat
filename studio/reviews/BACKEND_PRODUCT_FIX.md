@@ -13,6 +13,9 @@ decoding.
   canonical request fields `kcal_per_100g` and `serving_g`.
 - Added the contract-required `fiber_per_100g` field to the integration
   fixture.
+- Added the nutrition-profile setup required before the diary endpoint can
+  return its aggregated day summary. The custom food and entry were persisted,
+  but the summary correctly returned not-found when no nutrition profile existed.
 - Root cause: this integration fixture still used the obsolete names
   `calories_per_100g` and `serving_size_g`. `decodeJSON` intentionally calls
   `DisallowUnknownFields`, so the first obsolete property caused HTTP 400 with
