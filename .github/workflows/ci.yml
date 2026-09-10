@@ -69,6 +69,7 @@ jobs:
           node scripts/test-mobile-session-scope.mjs
           node scripts/test-mobile-technique-mapping.mjs
           node scripts/test-mobile-health-passive-sync.mjs
+          node scripts/test-mobile-core-screens.mjs
 
   android-internal:
     runs-on: ubuntu-latest

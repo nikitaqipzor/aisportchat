@@ -8,7 +8,7 @@ const tabs: Array<{id: MainTab; label: string; glyph: string}> = [
   {id: 'home', label: 'Сегодня', glyph: '●'},
   {id: 'training', label: 'Тренировка', glyph: '◆'},
   {id: 'nutrition', label: 'Питание', glyph: '◐'},
-  {id: 'progress', label: 'Прогресс', glyph: '↗'},
+  {id: 'progress', label: 'Аналитика', glyph: '↗'},
   {id: 'ai', label: 'AI', glyph: '✦'},
 ];
 

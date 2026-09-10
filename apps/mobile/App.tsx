@@ -424,7 +424,7 @@ export default function App() {
       {step === 'foodSearch' && <FoodSearchScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} onCustom={() => setStep('customFood')} onRecipes={() => setStep('recipes')} />}
       {step === 'customFood' && <CustomFoodScreen accessToken={access} onBack={() => setStep('foodSearch')} onSaved={() => setStep('foodSearch')} />}
       {step === 'recipes' && <RecipesScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} />}
-      {step === 'progress' && <ProgressScreen accessToken={access} onBack={() => setStep('home')} onBodyScan={() => setStep('bodyScan')} onTechnique={() => {setTechniqueContext(null); setStep('technique');}} />}
+      {step === 'progress' && <ProgressScreen accessToken={access} onBack={() => setStep('home')} onBodyScan={() => setStep('bodyScan')} onTechnique={() => {setTechniqueContext(null); setStep('technique');}} onDevices={() => setStep('devices')} />}
       {step === 'recovery' && <RecoveryScreen accessToken={access} onBack={() => setStep('home')} />}
       {step === 'devices' && <ConnectedDevicesScreen accessToken={access} onBack={() => setStep('home')} />}
       {step === 'bodyScan' && <BodyScanScreen accessToken={access} onBack={() => setStep('progress')} />}
