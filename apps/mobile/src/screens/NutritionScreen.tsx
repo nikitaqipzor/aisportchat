@@ -3,6 +3,7 @@ import {ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Te
 import {api} from '../api/client';
 import type {FoodEntry, NutritionDay, NutritionHistoryItem} from '../api/client';
 import {AppButton} from '../components/AppButton';
+import {currentLocalDate, shiftLocalDate} from '../domain/date';
 import {colors, control, radius, spacing} from '../theme/tokens';
 
 function Metric({title, value, target, unit}: {title: string; value: number; target: number; unit: string}) {
@@ -36,6 +37,7 @@ export function NutritionScreen({
   onAI: () => void;
 }) {
   const [day, setDay] = useState<NutritionDay | null>(null);
+  const [selectedDate, setSelectedDate] = useState(currentLocalDate());
   const [history, setHistory] = useState<NutritionHistoryItem[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -52,13 +54,13 @@ export function NutritionScreen({
         onSetup();
         return;
       }
-      const [today, h] = await Promise.all([api.nutritionToday(accessToken), api.nutritionHistory(accessToken, 7)]);
-      setDay(today);
+      const [selectedDay, h] = await Promise.all([api.nutritionToday(accessToken, selectedDate), api.nutritionHistory(accessToken, 7)]);
+      setDay(selectedDay);
       setHistory(h.items);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить питание');
     }
-  }, [accessToken, onSetup]);
+  }, [accessToken, onSetup, selectedDate]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); }, []);
@@ -67,6 +69,13 @@ export function NutritionScreen({
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  }
+
+  function openDate(date: string) {
+    if (date === selectedDate) return;
+    setDay(null);
+    setError('');
+    setSelectedDate(date);
   }
 
   async function remove(entry: FoodEntry) {
@@ -128,6 +137,8 @@ export function NutritionScreen({
     (acc[item.meal_type] ??= []).push(item);
     return acc;
   }, {});
+  const isToday = selectedDate === currentLocalDate();
+  const dateTitle = isToday ? 'Сегодня' : new Date(`${selectedDate}T12:00:00`).toLocaleDateString('ru-RU', {day: 'numeric', month: 'long'});
 
   return (
     <ScrollView contentContainerStyle={styles.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
@@ -137,7 +148,11 @@ export function NutritionScreen({
       </View>
 
       <Text style={styles.kicker}>FITNESS 2.0 · ПИТАНИЕ</Text>
-      <Text accessibilityRole="header" style={styles.title}>Сегодня</Text>
+      <View style={styles.dateNavigation}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Предыдущий день" testID="nutrition-previous-day" onPress={() => openDate(shiftLocalDate(selectedDate, -1))} style={styles.dateButton}><Text style={styles.dateArrow}>‹</Text></Pressable>
+        <View style={styles.dateCenter}><Text accessibilityRole="header" style={styles.title}>{dateTitle}</Text><Text style={styles.dateCaption}>{selectedDate}</Text></View>
+        <Pressable accessibilityRole="button" accessibilityLabel="Следующий день" accessibilityState={{disabled: isToday}} testID="nutrition-next-day" disabled={isToday} onPress={() => openDate(shiftLocalDate(selectedDate, 1))} style={[styles.dateButton, isToday && styles.dateButtonDisabled]}><Text style={styles.dateArrow}>›</Text></Pressable>
+      </View>
       <View style={styles.hero}>
         <Text style={styles.heroValue}>{Math.round(day.consumed_calories)}</Text>
         <Text style={styles.heroTarget}>/ {day.profile.calorie_target} kcal</Text>
@@ -149,11 +164,13 @@ export function NutritionScreen({
       <Metric title="Жиры" value={day.consumed_fat_g} target={day.profile.fat_target_g} unit="г" />
       <Metric title="Углеводы" value={day.consumed_carbs_g} target={day.profile.carb_target_g} unit="г" />
 
-      <AppButton label="✨ Добавить через AI" testID="nutrition-ai-add" onPress={onAI} />
-      <View style={styles.quickSecondary}>
-        <AppButton label="Поиск" variant="secondary" testID="nutrition-search" onPress={onAddFood} style={styles.quickHalf} />
-        <AppButton label="Рецепты" variant="secondary" testID="nutrition-recipes" onPress={onRecipes} style={styles.quickHalf} />
-      </View>
+      {isToday ? <>
+        <AppButton label="✨ Добавить через AI" testID="nutrition-ai-add" onPress={onAI} />
+        <View style={styles.quickSecondary}>
+          <AppButton label="Поиск" variant="secondary" testID="nutrition-search" onPress={onAddFood} style={styles.quickHalf} />
+          <AppButton label="Рецепты" variant="secondary" testID="nutrition-recipes" onPress={onRecipes} style={styles.quickHalf} />
+        </View>
+      </> : <View style={styles.pastDayNotice}><Text style={styles.pastDayText}>Просмотр прошедшего дня. Новые записи добавляются в сегодняшний дневник.</Text><AppButton label="Вернуться к сегодня" variant="secondary" testID="nutrition-return-today" onPress={() => openDate(currentLocalDate())}/></View>}
 
       <Text style={styles.section}>Дневник</Text>
       {(['breakfast', 'lunch', 'dinner', 'snack'] as const).map(meal => (
@@ -205,10 +222,10 @@ export function NutritionScreen({
       <View style={styles.history}>
         {history.length === 0 ? <Text style={styles.historyEmpty}>Пока недостаточно записей для истории.</Text> : null}
         {history.map(item => (
-          <View key={item.date} style={styles.historyRow}>
+          <Pressable key={item.date} accessibilityRole="button" accessibilityLabel={`Открыть питание за ${item.date}`} accessibilityState={{selected: item.date === selectedDate}} onPress={() => openDate(item.date)} style={[styles.historyRow, item.date === selectedDate && styles.historyRowSelected]}>
             <View><Text style={styles.historyDate}>{item.date.slice(5)}</Text><Text style={styles.historyMeta}>{item.training_day ? '● тренировочный' : 'день отдыха'}</Text></View>
             <Text style={styles.historyCalories}>{Math.round(item.calories)} / {item.target_calories}</Text>
-          </View>
+          </Pressable>
         ))}
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -224,6 +241,12 @@ const styles = StyleSheet.create({
   edit: {fontWeight: '800'},
   kicker: {fontSize: 11, fontWeight: '900', letterSpacing: 1.4, color: colors.textMuted},
   title: {fontSize: 32, fontWeight: '900'},
+  dateNavigation:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:spacing.sm},
+  dateButton:{width:control.minTouch,height:control.minTouch,borderWidth:1,borderColor:colors.border,borderRadius:radius.md,alignItems:'center',justifyContent:'center'},
+  dateButtonDisabled:{opacity:.3},
+  dateArrow:{fontSize:30,lineHeight:34,fontWeight:'500',color:colors.text},
+  dateCenter:{flex:1,alignItems:'center'},
+  dateCaption:{fontSize:11,color:colors.textMuted,marginTop:2},
   muted: {color: colors.textMuted,lineHeight:19},
   loading:{minHeight:100,alignItems:'center',justifyContent:'center',gap:spacing.sm},
   hero: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: 18},
@@ -239,6 +262,8 @@ const styles = StyleSheet.create({
   fill: {height: '100%', backgroundColor: colors.primary, borderRadius: 99},
   quickSecondary: {flexDirection: 'row', gap: spacing.sm},
   quickHalf: {flex: 1},
+  pastDayNotice:{borderRadius:radius.md,backgroundColor:colors.surfaceMuted,padding:spacing.md,gap:spacing.sm},
+  pastDayText:{fontSize:12,lineHeight:18,color:colors.textMuted},
   section: {fontSize: 19, fontWeight: '900', marginTop: 4},
   mealCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 18, padding: 14, gap: 9},
   mealTitle: {fontWeight: '900', fontSize: 16},
@@ -258,6 +283,7 @@ const styles = StyleSheet.create({
   history: {borderWidth: 1, borderColor: colors.border, borderRadius: 18, overflow: 'hidden'},
   historyEmpty:{padding:spacing.md,color:colors.textMuted,fontSize:12,lineHeight:18},
   historyRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottomWidth: StyleSheet.hairlineWidth},
+  historyRowSelected:{backgroundColor:colors.surfaceMuted},
   historyDate: {fontWeight: '800'},
   historyMeta: {fontSize: 10, color: colors.textMuted, marginTop: 2},
   historyCalories: {fontWeight: '800'},

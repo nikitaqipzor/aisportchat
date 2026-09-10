@@ -80,6 +80,7 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
   const available=status?.sdk_status==='available'; const granted=status?.permissions_granted===true;
   const b28=insights?.baseline_28d;
   const miFitnessState=!status?'Статус Mi Fitness пока неизвестен':status.mi_fitness_installed?'Mi Fitness найден на телефоне':'Mi Fitness не найден';
+  const connectionStep=!status?.mi_fitness_installed?1:!available?2:!granted?3:!snapshot?4:5;
   return <ScrollView testID="connected-devices-screen" contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
     <Pressable
       onPress={onBack}
@@ -93,6 +94,14 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     <Text style={styles.kicker}>УСТРОЙСТВА</Text>
     <Text accessibilityRole="header" style={styles.title}>Подключённые устройства</Text>
     <Text style={styles.intro}>Импортируй активность и сон из Health Connect. Приложение читает только выбранные тобой категории.</Text>
+
+    <View style={styles.connectionCard} testID="health-connection-progress">
+      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.connectionEyebrow}>ПОДКЛЮЧЕНИЕ</Text><Text style={styles.connectionTitle}>{connectionStep===5?'Часы подключены':`Шаг ${connectionStep} из 4`}</Text></View><Text style={[styles.connectionBadge,connectionStep===5&&styles.connectionBadgeReady]}>{connectionStep===5?'ГОТОВО':'НАСТРОЙКА'}</Text></View>
+      <ConnectionStep number={1} title="Mi Fitness" detail={status?.mi_fitness_installed?'Приложение найдено':'Установите Mi Fitness и синхронизируйте часы'} done={connectionStep>1}/>
+      <ConnectionStep number={2} title="Health Connect" detail={available?'Доступен':'Установите или обновите Health Connect'} done={connectionStep>2}/>
+      <ConnectionStep number={3} title="Разрешения" detail={granted?'Доступ выдан':'Разрешите чтение выбранных показателей'} done={connectionStep>3}/>
+      <ConnectionStep number={4} title="Первая синхронизация" detail={snapshot?'Данные получены':'Синхронизируйте данные за сегодня'} done={connectionStep>4}/>
+    </View>
 
     {initialLoading?<View accessibilityLiveRegion="polite" style={styles.loadingCard}><ActivityIndicator color={colors.text}/><Text style={styles.meta}>Проверяем устройство и данные…</Text></View>:null}
     {loadError?<View style={styles.errorCard}><Text accessibilityRole="alert" style={styles.errorText}>{loadError}</Text><AppButton label="Повторить проверку" variant="secondary" disabled={initialLoading||busy} loading={initialLoading} onPress={()=>void load()} testID="health-retry-load"/></View>:null}
@@ -146,6 +155,7 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
   </ScrollView>;
 }
 function Metric({label,value}:{label:string;value:string}){return <View accessible accessibilityLabel={`${label}: ${value}`} style={styles.metric}><Text accessible={false} style={styles.metricLabel}>{label}</Text><Text accessible={false} style={styles.metricValue}>{value}</Text></View>}
+function ConnectionStep({number,title,detail,done}:{number:number;title:string;detail:string;done:boolean}){return <View accessible accessibilityLabel={`${title}. ${detail}`} style={styles.connectionStep}><View accessible={false} style={[styles.stepDot,done&&styles.stepDotDone]}><Text style={[styles.stepNumber,done&&styles.stepNumberDone]}>{done?'✓':number}</Text></View><View accessible={false} style={styles.flex}><Text style={styles.stepTitle}>{title}</Text><Text style={styles.stepDetail}>{detail}</Text></View></View>}
 function provenanceName(value:string){return value==='steps'?'Шаги':value==='distance'?'Дистанция':value==='active_calories'?'Активные калории':value==='sleep'?'Сон':value==='exercise'?'Тренировки':value==='heart_rate'?'Пульс тренировки':'Пульс покоя'}
 const styles=StyleSheet.create({
   container:{flexGrow:1,padding:spacing.lg,paddingBottom:spacing.xl,gap:spacing.md,backgroundColor:colors.background},
@@ -154,6 +164,18 @@ const styles=StyleSheet.create({
   kicker:{fontSize:11,fontWeight:'900',letterSpacing:1.4,color:colors.textMuted},
   title:{fontSize:30,lineHeight:37,fontWeight:'900',color:colors.text},
   intro:{fontSize:14,lineHeight:21,color:colors.textMuted},
+  connectionCard:{borderRadius:radius.lg,padding:spacing.md,gap:11,backgroundColor:colors.primary},
+  connectionEyebrow:{fontSize:10,fontWeight:'900',letterSpacing:1.2,color:'#AFAFAF'},
+  connectionTitle:{fontSize:20,lineHeight:26,fontWeight:'900',color:colors.inverse,marginTop:2},
+  connectionBadge:{fontSize:9,fontWeight:'900',color:colors.text,backgroundColor:'#E5E5E5',borderRadius:radius.pill,paddingHorizontal:9,paddingVertical:6},
+  connectionBadgeReady:{color:colors.success,backgroundColor:'#E8F5ED'},
+  connectionStep:{flexDirection:'row',alignItems:'center',gap:11,minHeight:44},
+  stepDot:{width:30,height:30,borderRadius:15,alignItems:'center',justifyContent:'center',borderWidth:1,borderColor:'#666'},
+  stepDotDone:{backgroundColor:colors.inverse,borderColor:colors.inverse},
+  stepNumber:{fontSize:12,fontWeight:'900',color:'#AAA'},
+  stepNumberDone:{color:colors.success},
+  stepTitle:{fontSize:13,lineHeight:18,fontWeight:'900',color:colors.inverse},
+  stepDetail:{fontSize:11,lineHeight:16,color:'#BDBDBD'},
   loadingCard:{minHeight:72,borderRadius:radius.md,padding:spacing.md,backgroundColor:colors.surfaceMuted,flexDirection:'row',alignItems:'center',gap:spacing.sm},
   errorCard:{borderWidth:1,borderColor:colors.danger,borderRadius:radius.md,padding:spacing.md,gap:spacing.sm,backgroundColor:colors.surface},
   deviceCard:{borderWidth:1,borderColor:colors.border,borderRadius:radius.lg,padding:spacing.md,flexDirection:'row',gap:13,alignItems:'center',backgroundColor:colors.surface},
