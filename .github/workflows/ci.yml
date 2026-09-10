@@ -5,6 +5,13 @@ on:
   pull_request:
 
 jobs:
+  deployment-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate staging Compose and TLS proxy contract
+        run: ./scripts/verify-staging-deploy.sh
+
   backend:
     runs-on: ubuntu-latest
     services:
