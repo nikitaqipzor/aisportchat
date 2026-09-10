@@ -1,9 +1,9 @@
 import React, {useEffect, useMemo, useState} from 'react';
-import {ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import {ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {api, WorkoutSet, WorkoutView} from '../api/client';
 import {ExerciseGuide} from '../components/ExerciseGuide';
 import {sessionStorage} from '../storage/session';
-import {restTimerNotifications} from '../native/restTimer';
+import {restSecondsRemaining, restTimerCoordinator} from '../domain/restTimer';
 import {TechniqueWorkoutContext, techniqueKeyForExercise} from '../domain/technique';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
@@ -29,7 +29,8 @@ export function ActiveWorkoutScreen({
   const [weight, setWeight] = useState('');
   const [reps, setReps] = useState('');
   const [rir, setRir] = useState('2');
-  const [rest, setRest] = useState(0);
+  const [restDeadline, setRestDeadline] = useState<number | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [offlineNotice, setOfflineNotice] = useState('');
@@ -55,11 +56,43 @@ export function ActiveWorkoutScreen({
     }
   }, [current?.workout_exercise.id, nextSetNumber, techniquePrefill?.analysisId]);
 
+  const rest = restSecondsRemaining(restDeadline, clock);
+
   useEffect(() => {
-    if (rest <= 0) return;
-    const timer = setInterval(() => setRest(value => Math.max(0, value - 1)), 1000);
+    let active = true;
+    void restTimerCoordinator.restore(workout.workout.id).then(snapshot => {
+      if (active) {
+        setClock(Date.now());
+        setRestDeadline(snapshot?.deadlineMs ?? null);
+      }
+    });
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') return;
+      setClock(Date.now());
+      void restTimerCoordinator.restore(workout.workout.id).then(snapshot => {
+        if (active) setRestDeadline(snapshot?.deadlineMs ?? null);
+      });
+    });
+    return () => {
+      active = false;
+      subscription.remove();
+    };
+  }, [workout.workout.id]);
+
+  useEffect(() => {
+    if (restDeadline === null) return;
+    const tick = () => setClock(Date.now());
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [rest]);
+  }, [restDeadline]);
+
+  useEffect(() => {
+    if (restDeadline !== null && rest <= 0) {
+      setRestDeadline(null);
+      void restTimerCoordinator.invalidate();
+    }
+  }, [rest, restDeadline]);
 
   const progress = useMemo(() => {
     const done = workout.exercises.reduce((sum, item) => sum + Math.min(item.sets.length, item.workout_exercise.target_sets), 0);
@@ -136,23 +169,23 @@ export function ActiveWorkoutScreen({
   }
 
   function startRest(seconds: number) {
-    setRest(seconds);
-    void restTimerNotifications.cancel().finally(() => {
-      void restTimerNotifications.schedule(seconds, current.exercise.name);
-    });
+    const deadline = Date.now() + seconds * 1000;
+    setClock(Date.now());
+    setRestDeadline(deadline);
+    void restTimerCoordinator.start(workout.workout.id, current.exercise.name, seconds);
   }
 
   function skipRest() {
-    setRest(0);
-    void restTimerNotifications.cancel();
+    setRestDeadline(null);
+    void restTimerCoordinator.invalidate();
   }
 
   async function finishConfirmed() {
     try {
       setFinishing(true);
       setError('');
-      await restTimerNotifications.cancel();
-      setRest(0);
+      setRestDeadline(null);
+      await restTimerCoordinator.invalidate();
       await onFinish();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось завершить тренировку.');
@@ -186,10 +219,8 @@ export function ActiveWorkoutScreen({
           style: 'destructive',
           onPress: () => {
             setCancelling(true);
-            void restTimerNotifications.cancel().finally(() => {
-              setRest(0);
-              void onCancel().catch(e => setError(e instanceof Error ? e.message : 'Не удалось отменить тренировку.')).finally(() => setCancelling(false));
-            });
+            setRestDeadline(null);
+            void restTimerCoordinator.invalidate().then(onCancel).catch(e => setError(e instanceof Error ? e.message : 'Не удалось отменить тренировку.')).finally(() => setCancelling(false));
           },
         },
       ],

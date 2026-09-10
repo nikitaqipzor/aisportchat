@@ -117,6 +117,50 @@ func TestAthleteProfileValidation(t *testing.T) {
 	}
 }
 
+func TestAthleteProfileAtomicUpdateAndValidationRollback(t *testing.T) {
+	st := store.NewMemory()
+	tm := auth.NewTokenManager("test-secret", 15*time.Minute, 24*time.Hour)
+	h := NewServerWithDependencies(st, tm)
+	access := registerAndOnboard(t, h, "atomic-profile@example.com")
+
+	valid := map[string]any{
+		"profile": map[string]any{
+			"user_id": "attacker-controlled", "height_cm": 193, "weight_kg": 97, "age_years": 30,
+			"experience_level": "intermediate", "injuries": []string{"shoulder"}, "limitations": []string{"no flyes"}, "unit_system": "metric",
+		},
+		"goal": map[string]any{"user_id": "attacker-controlled", "goal_type": "strength"},
+		"training_preferences": map[string]any{
+			"user_id": "attacker-controlled", "environments": []string{"gym"}, "equipment_ids": []string{"barbell"}, "workouts_per_week": 4, "session_minutes": 75,
+		},
+	}
+	saved := doJSON(t, h, http.MethodPut, "/api/v1/profile/athlete", valid, access)
+	if saved.Code != http.StatusOK {
+		t.Fatalf("atomic save status=%d body=%s", saved.Code, saved.Body.String())
+	}
+	if strings.Contains(saved.Body.String(), "attacker-controlled") {
+		t.Fatalf("request user_id leaked into persisted aggregate: %s", saved.Body.String())
+	}
+
+	invalid := map[string]any{
+		"profile": map[string]any{
+			"height_cm": 180, "weight_kg": 80, "age_years": 31, "experience_level": "advanced",
+			"injuries": []string{}, "limitations": []string{}, "unit_system": "metric",
+		},
+		"goal": map[string]any{"goal_type": "fat_loss"},
+		"training_preferences": map[string]any{
+			"environments": []string{"gym"}, "equipment_ids": []string{"not-real"}, "workouts_per_week": 2, "session_minutes": 45,
+		},
+	}
+	rejected := doJSON(t, h, http.MethodPut, "/api/v1/profile/athlete", invalid, access)
+	if rejected.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid aggregate status=%d body=%s", rejected.Code, rejected.Body.String())
+	}
+	loaded := doJSON(t, h, http.MethodGet, "/api/v1/profile", nil, access)
+	if loaded.Code != http.StatusOK || !strings.Contains(loaded.Body.String(), `"height_cm":193`) || !strings.Contains(loaded.Body.String(), `"goal_type":"strength"`) || !strings.Contains(loaded.Body.String(), `"workouts_per_week":4`) {
+		t.Fatalf("invalid aggregate partially changed stored profile: status=%d body=%s", loaded.Code, loaded.Body.String())
+	}
+}
+
 func TestProtectedRouteRejectsMissingToken(t *testing.T) {
 	h := NewServer()
 	rr := doJSON(t, h, http.MethodGet, "/api/v1/profile", nil, "")

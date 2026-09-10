@@ -4,6 +4,7 @@ import {api} from '../api/client';
 import type {FoodEntry, NutritionDay, NutritionHistoryItem} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {currentLocalDate, shiftLocalDate} from '../domain/date';
+import {repeatedNutritionState} from '../domain/nutrition';
 import {colors, control, radius, spacing} from '../theme/tokens';
 
 function Metric({title, value, target, unit}: {title: string; value: number; target: number; unit: string}) {
@@ -115,7 +116,11 @@ export function NutritionScreen({
   async function repeat(entry: FoodEntry) {
     try {
       setRepeatingId(entry.id);
-      setDay(await api.repeatFoodEntry(accessToken, entry.id, entry.meal_type));
+      setError('');
+      const repeatedDay = await api.repeatFoodEntry(accessToken, entry.id, entry.meal_type);
+      const next = repeatedNutritionState(repeatedDay);
+      setSelectedDate(next.selectedDate);
+      setDay(next.day);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось повторить запись');
     } finally {

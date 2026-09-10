@@ -53,6 +53,43 @@ func TestPostgresCriticalReleaseFlow(t *testing.T) {
 		t.Fatalf("postgres profile explicit clear=%d body=%s", rr.Code, rr.Body.String())
 	}
 
+	// The aggregate store transaction must roll back profile and goal if a later
+	// training write fails (the unknown equipment id violates its FK).
+	var profileEnvelope struct {
+		Profile store.Profile `json:"profile"`
+	}
+	if err := json.Unmarshal(profile.Body.Bytes(), &profileEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	beforeGoal, err := pg.GetGoal(context.Background(), profileEnvelope.Profile.UserID)
+	if err != nil {
+		t.Fatalf("load goal before rollback test: %v", err)
+	}
+	height, weight, age := 180.0, 80.0, 31
+	level := "advanced"
+	_, err = pg.SaveAthleteProfile(context.Background(), profileEnvelope.Profile.UserID, store.AthleteProfileUpdate{
+		Profile: store.Profile{HeightCM: &height, WeightKG: &weight, AgeYears: &age, ExperienceLevel: &level, UnitSystem: "metric", Injuries: []string{}, Limitations: []string{}},
+		Goal: store.Goal{GoalType: "fat_loss"},
+		TrainingPreferences: store.TrainingPreferences{Environments: []string{"gym"}, EquipmentIDs: []string{"missing-equipment-fk"}, WorkoutsPerWeek: 2, SessionMinutes: 45},
+	})
+	if err == nil {
+		t.Fatal("expected aggregate save to fail on unknown equipment FK")
+	}
+	afterProfile, err := pg.GetProfile(context.Background(), profileEnvelope.Profile.UserID)
+	if err != nil {
+		t.Fatalf("load profile after rollback: %v", err)
+	}
+	afterGoal, err := pg.GetGoal(context.Background(), profileEnvelope.Profile.UserID)
+	if err != nil {
+		t.Fatalf("load goal after rollback: %v", err)
+	}
+	if afterProfile.HeightCM != nil && *afterProfile.HeightCM == height {
+		t.Fatalf("profile write escaped rollback: %+v", afterProfile)
+	}
+	if afterGoal.GoalType != beforeGoal.GoalType {
+		t.Fatalf("goal write escaped rollback: before=%s after=%s", beforeGoal.GoalType, afterGoal.GoalType)
+	}
+
 	// Workout persistence: generate -> start -> log -> finish -> history.
 	generated := doJSON(t, h, http.MethodPost, "/api/v1/workouts/generate", map[string]any{
 		"muscle": "chest", "environment": "gym", "duration_minutes": 45,

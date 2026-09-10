@@ -1,5 +1,5 @@
-import React, {useState} from 'react';
-import {Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
+import React, {useCallback, useEffect, useState} from 'react';
+import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {api, NutritionProfile} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
@@ -48,7 +48,32 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
   const [fat, setFat] = useState('75');
   const [carbs, setCarbs] = useState('280');
   const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
+
+  const loadProfile = useCallback(async () => {
+    try {
+      setLoading(true);
+      setLoadError('');
+      const profile = await api.nutritionProfile(accessToken);
+      if (profile) {
+        setGoal(profile.goal);
+        setActivity(profile.activity_level);
+        setMode(profile.calculation_mode);
+        setCalories(String(profile.calorie_target));
+        setProtein(String(profile.protein_target_g));
+        setFat(String(profile.fat_target_g));
+        setCarbs(String(profile.carb_target_g));
+      }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить текущие настройки питания.');
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => { void loadProfile(); }, [loadProfile]);
 
   const calorieNumber = numberFromInput(calories);
   const calorieError = !calories.trim()
@@ -62,7 +87,7 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
   const manualValid = !calorieError && !proteinError && !fatError && !carbsError;
 
   async function save() {
-    if (saving || (mode === 'manual' && !manualValid)) {
+    if (loading || loadError || saving || (mode === 'manual' && !manualValid)) {
       return;
     }
     try {
@@ -92,6 +117,31 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
     if (error) {
       setError('');
     }
+  }
+
+  if (loading || loadError) {
+    return (
+      <ScrollView testID="nutrition-setup-screen" contentContainerStyle={styles.container}>
+        <View style={styles.content}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Вернуться к питанию" onPress={onBack} style={styles.backButton}>
+            <Text style={styles.back}>← Назад</Text>
+          </Pressable>
+          <Text accessibilityRole="header" style={styles.title}>Настройки питания</Text>
+          {loadError ? (
+            <View style={styles.loadState}>
+              <Text accessibilityRole="alert" style={styles.error}>{loadError}</Text>
+              <Text style={styles.noteText}>Значения по умолчанию не показаны, чтобы случайно не заменить ваши текущие цели.</Text>
+              <AppButton label="Повторить загрузку" variant="secondary" testID="nutrition-setup-retry" onPress={() => void loadProfile()} />
+            </View>
+          ) : (
+            <View style={styles.loadState} accessibilityLiveRegion="polite">
+              <ActivityIndicator color={colors.text} />
+              <Text style={styles.noteText}>Загружаем текущие цели…</Text>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+    );
   }
 
   return (
@@ -130,8 +180,8 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
                 accessibilityRole="radio"
                 accessibilityLabel={item.title}
                 accessibilityHint={item.subtitle}
-                accessibilityState={{selected, disabled: saving}}
-                disabled={saving}
+                accessibilityState={{selected, disabled: saving || loading}}
+                disabled={saving || loading}
                 onPress={() => {
                   setGoal(item.id);
                   clearServerError();
@@ -155,8 +205,8 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
                 accessibilityRole="radio"
                 accessibilityLabel={item.title}
                 accessibilityHint={item.hint}
-                accessibilityState={{selected, disabled: saving}}
-                disabled={saving}
+                accessibilityState={{selected, disabled: saving || loading}}
+                disabled={saving || loading}
                 onPress={() => {
                   setActivity(item.id);
                   clearServerError();
@@ -180,8 +230,8 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
                 testID={`nutrition-mode-${item}`}
                 accessibilityRole="radio"
                 accessibilityLabel={label}
-                accessibilityState={{selected, disabled: saving}}
-                disabled={saving}
+                accessibilityState={{selected, disabled: saving || loading}}
+                disabled={saving || loading}
                 onPress={() => {
                   setMode(item);
                   clearServerError();
@@ -228,7 +278,7 @@ export function NutritionSetupScreen({accessToken, onBack, onSaved}: {accessToke
           accessibilityLabel={mode === 'auto' ? 'Рассчитать и сохранить питание' : 'Сохранить ручные цели питания'}
           testID="nutrition-save"
           loading={saving}
-          disabled={mode === 'manual' && !manualValid}
+          disabled={loading || Boolean(loadError) || (mode === 'manual' && !manualValid)}
           onPress={() => void save()}
         />
       </View>
@@ -305,6 +355,7 @@ const styles = StyleSheet.create({
   note: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: 14, marginTop: spacing.xs, backgroundColor: colors.surfaceMuted},
   noteTitle: {fontSize: 13, lineHeight: 18, fontWeight: '900', color: colors.text, marginBottom: spacing.xs},
   noteText: {fontSize: 13, lineHeight: 19, color: colors.textMuted},
+  loadState: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm, backgroundColor: colors.surface},
   error: {fontSize: 13, lineHeight: 19, fontWeight: '700', color: colors.danger},
   pressed: {opacity: 0.72},
 });

@@ -327,6 +327,96 @@ func (p *Postgres) GetTrainingPreferences(ctx context.Context, userID string) (T
 	return TrainingPreferences{UserID: val(r, 0), WorkoutsPerWeek: wpw, SessionMinutes: mins, UpdatedAt: updated, Environments: splitCSV(val(r, 4)), EquipmentIDs: splitCSV(val(r, 5))}, nil
 }
 
+func (p *Postgres) SaveAthleteProfile(ctx context.Context, userID string, update AthleteProfileUpdate) (AthleteProfileUpdate, error) {
+	var out AthleteProfileUpdate
+	err := p.withTx(ctx, func() error {
+		profileIn := update.Profile
+		profileIn.UserID = userID
+		injuries, err := json.Marshal(profileIn.Injuries)
+		if err != nil {
+			return err
+		}
+		limitations, err := json.Marshal(profileIn.Limitations)
+		if err != nil {
+			return err
+		}
+		rows, err := p.queryLocked(ctx, `
+			INSERT INTO user_profiles(user_id,birth_date,gender,height_cm,weight_kg,experience_level,unit_system,age_years,injuries,limitations,updated_at)
+			VALUES($1::uuid,$2::date,$3,$4::numeric,$5::numeric,$6,$7,$8::smallint,$9::jsonb,$10::jsonb,now())
+			ON CONFLICT(user_id) DO UPDATE SET birth_date=EXCLUDED.birth_date,gender=EXCLUDED.gender,
+			  height_cm=EXCLUDED.height_cm,weight_kg=EXCLUDED.weight_kg,experience_level=EXCLUDED.experience_level,
+			  unit_system=EXCLUDED.unit_system,age_years=EXCLUDED.age_years,injuries=EXCLUDED.injuries,
+			  limitations=EXCLUDED.limitations,updated_at=now()
+			RETURNING user_id::text,birth_date::text,gender,height_cm::text,weight_kg::text,experience_level,unit_system,updated_at::text,age_years::text,injuries::text,limitations::text`,
+			sp(userID), profileIn.BirthDate, profileIn.Gender, fp(profileIn.HeightCM), fp(profileIn.WeightKG), profileIn.ExperienceLevel,
+			sp(profileIn.UnitSystem), ip(profileIn.AgeYears), sp(string(injuries)), sp(string(limitations)))
+		if err != nil {
+			return err
+		}
+		out.Profile, err = scanProfile(rows[0])
+		if err != nil {
+			return err
+		}
+
+		goalIn := update.Goal
+		goalIn.UserID = userID
+		rows, err = p.queryLocked(ctx, `
+			INSERT INTO user_goals(user_id,goal_type,target_weight_kg,started_at,updated_at)
+			VALUES($1::uuid,$2,$3::numeric,now(),now())
+			ON CONFLICT(user_id) DO UPDATE SET goal_type=EXCLUDED.goal_type,target_weight_kg=EXCLUDED.target_weight_kg,updated_at=now()
+			RETURNING user_id::text,goal_type,target_weight_kg::text,started_at::text`, sp(userID), sp(goalIn.GoalType), fp(goalIn.TargetWeight))
+		if err != nil {
+			return err
+		}
+		out.Goal, err = scanGoal(rows[0])
+		if err != nil {
+			return err
+		}
+
+		prefs := update.TrainingPreferences
+		prefs.UserID = userID
+		if _, err = p.queryLocked(ctx, `
+			INSERT INTO user_training_preferences(user_id,workouts_per_week,session_minutes,updated_at)
+			VALUES($1::uuid,$2::smallint,$3::smallint,now())
+			ON CONFLICT(user_id) DO UPDATE SET workouts_per_week=EXCLUDED.workouts_per_week,session_minutes=EXCLUDED.session_minutes,updated_at=now()`,
+			sp(userID), sp(strconv.Itoa(prefs.WorkoutsPerWeek)), sp(strconv.Itoa(prefs.SessionMinutes))); err != nil {
+			return err
+		}
+		if _, err = p.queryLocked(ctx, `DELETE FROM user_training_environments WHERE user_id=$1::uuid`, sp(userID)); err != nil {
+			return err
+		}
+		for _, environment := range prefs.Environments {
+			if _, err = p.queryLocked(ctx, `INSERT INTO user_training_environments(user_id,environment) VALUES($1::uuid,$2)`, sp(userID), sp(environment)); err != nil {
+				return err
+			}
+		}
+		if _, err = p.queryLocked(ctx, `DELETE FROM user_equipment WHERE user_id=$1::uuid`, sp(userID)); err != nil {
+			return err
+		}
+		for _, equipmentID := range prefs.EquipmentIDs {
+			if _, err = p.queryLocked(ctx, `INSERT INTO user_equipment(user_id,equipment_id) VALUES($1::uuid,$2)`, sp(userID), sp(equipmentID)); err != nil {
+				return err
+			}
+		}
+		rows, err = p.queryLocked(ctx, `SELECT p.user_id::text,p.workouts_per_week::text,p.session_minutes::text,p.updated_at::text,
+			COALESCE((SELECT string_agg(environment,',' ORDER BY environment) FROM user_training_environments e WHERE e.user_id=p.user_id),''),
+			COALESCE((SELECT string_agg(equipment_id,',' ORDER BY equipment_id) FROM user_equipment q WHERE q.user_id=p.user_id),'')
+			FROM user_training_preferences p WHERE p.user_id=$1::uuid`, sp(userID))
+		if err != nil {
+			return err
+		}
+		wpw, _ := strconv.Atoi(val(rows[0], 1))
+		minutes, _ := strconv.Atoi(val(rows[0], 2))
+		updatedAt, _ := parseTime(val(rows[0], 3))
+		out.TrainingPreferences = TrainingPreferences{UserID: userID, WorkoutsPerWeek: wpw, SessionMinutes: minutes, UpdatedAt: updatedAt, Environments: splitCSV(val(rows[0], 4)), EquipmentIDs: splitCSV(val(rows[0], 5))}
+		return nil
+	})
+	if err != nil {
+		return AthleteProfileUpdate{}, err
+	}
+	return out, nil
+}
+
 func (p *Postgres) GetOnboardingStatus(ctx context.Context, userID string) (OnboardingStatus, error) {
 	rows, err := p.query(ctx, `
       SELECT

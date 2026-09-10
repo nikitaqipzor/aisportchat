@@ -192,6 +192,36 @@ func (m *Memory) GetTrainingPreferences(_ context.Context, userID string) (Train
 	return p, nil
 }
 
+func (m *Memory) SaveAthleteProfile(_ context.Context, userID string, update AthleteProfileUpdate) (AthleteProfileUpdate, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	profile := update.Profile
+	profile.UserID = userID
+	profile.Injuries = append([]string(nil), profile.Injuries...)
+	profile.Limitations = append([]string(nil), profile.Limitations...)
+	if profile.UnitSystem == "" {
+		profile.UnitSystem = "metric"
+	}
+	profile.UpdatedAt = time.Now().UTC()
+
+	goal := update.Goal
+	goal.UserID = userID
+	goal.StartedAt = time.Now().UTC()
+
+	prefs := update.TrainingPreferences
+	prefs.UserID = userID
+	prefs.Environments = append([]string(nil), prefs.Environments...)
+	prefs.EquipmentIDs = append([]string(nil), prefs.EquipmentIDs...)
+	prefs.UpdatedAt = time.Now().UTC()
+
+	// One critical section makes the three map replacements visible atomically.
+	m.profiles[userID] = profile
+	m.goals[userID] = goal
+	m.prefs[userID] = prefs
+	return AthleteProfileUpdate{Profile: profile, Goal: goal, TrainingPreferences: prefs}, nil
+}
+
 func (m *Memory) GetOnboardingStatus(_ context.Context, userID string) (OnboardingStatus, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

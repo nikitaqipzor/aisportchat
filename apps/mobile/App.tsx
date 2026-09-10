@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {ActivityIndicator, AppState, BackHandler, StatusBar, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Alert, AppState, BackHandler, StatusBar, StyleSheet, Text, View} from 'react-native';
 import {SafeAreaProvider, SafeAreaView} from 'react-native-safe-area-context';
 import {api, AuthTokens, FinishResult, OnboardingStatus, TechniqueResult, WorkoutView} from './src/api/client';
 import {ActiveWorkoutScreen} from './src/screens/ActiveWorkoutScreen';
@@ -79,6 +79,12 @@ function localFinished(workout: WorkoutView): FinishResult {
   };
 }
 
+function savedSessionMayRunOffline(tokens: AuthTokens | null) {
+  if (!tokens) return false;
+  const expires = Date.parse(tokens.access_expires_at);
+  return Number.isFinite(expires) && Date.now() - expires < 7 * 24 * 60 * 60 * 1000;
+}
+
 export default function App() {
   const [step, setStep] = useState<Step>('auth');
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
@@ -92,23 +98,25 @@ export default function App() {
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
   const [techniqueContext, setTechniqueContext] = useState<TechniqueWorkoutContext | null>(null);
   const [techniquePrefill, setTechniquePrefill] = useState<{workoutExerciseId: string; setNumber: number; repCount: number; analysisId: string} | null>(null);
+  const [devicesOrigin, setDevicesOrigin] = useState<'home' | 'progress'>('home');
 
   const access = tokens?.access_token ?? '';
 
-  async function clearLocalAccountState() {
+  async function revokeLocalSession(clearEnvironmentCache = false) {
     const ownerUserId = await sessionStorage.currentUserId();
     if (ownerUserId) {
-      try { await healthConnect.clearPassiveSync(ownerUserId); } catch { /* logout must still complete locally */ }
+      try { await healthConnect.clearPassiveSync(ownerUserId); } catch { /* credential revocation must still complete */ }
+      if (clearEnvironmentCache) await sessionStorage.clearTrainingEnvironments(ownerUserId);
     }
-    await sessionStorage.clearTransientData();
-    await sessionStorage.clearTokens();
+    if (clearEnvironmentCache) await sessionStorage.clearTokens();
+    else await sessionStorage.revokeCurrentSession();
   }
 
   useEffect(() => {
     api.configureAuthSession({
       loadTokens: () => sessionStorage.loadTokens(),
       saveTokens: tokens => sessionStorage.saveTokens(tokens),
-      clearTokens: clearLocalAccountState,
+      clearTokens: () => revokeLocalSession(false),
       onTokensChanged: next => {
         setTokens(next);
         if (!next) {
@@ -147,7 +155,8 @@ export default function App() {
       if (step === 'foodPhoto') { setStep('aiFood'); return true; }
       if (step === 'weeklyAI') { setStep('aiCoach'); return true; }
       if (step === 'bodyScan') { setStep('progress'); return true; }
-      if (step === 'recovery' || step === 'devices' || step === 'profileSettings') { setStep('home'); return true; }
+      if (step === 'devices') { setStep(devicesOrigin); return true; }
+      if (step === 'recovery' || step === 'profileSettings') { setStep('home'); return true; }
       if (step === 'technique') { setStep(techniqueContext ? 'active' : 'progress'); setTechniqueContext(null); return true; }
       if (step === 'programSetup' || step === 'programDetail') { setStep('programs'); return true; }
       if (step === 'workoutDetail') {
@@ -164,15 +173,7 @@ export default function App() {
       return false;
     });
     return () => subscription.remove();
-  }, [step, selectedMuscle, techniqueContext]);
-
-  async function refreshTokens(current: AuthTokens) {
-    const refreshed = await api.refresh(current.refresh_token);
-    setTokens(refreshed.tokens);
-    api.setCurrentTokens(refreshed.tokens);
-    await sessionStorage.saveTokens(refreshed.tokens);
-    return refreshed.tokens;
-  }
+  }, [step, selectedMuscle, techniqueContext, devicesOrigin]);
 
   async function getOnboarding(current: AuthTokens) {
     const status = await api.onboardingStatus(current.access_token);
@@ -181,9 +182,10 @@ export default function App() {
   }
 
   async function bootstrap() {
+    let saved: AuthTokens | null = null;
     try {
       setBooting(true);
-      const saved = await sessionStorage.loadTokens();
+      saved = await sessionStorage.loadTokens();
       if (!saved) {
         setStep('auth');
         return;
@@ -224,7 +226,7 @@ export default function App() {
       }
     } catch (error) {
       if (api.isUnauthorized(error)) {
-        await clearLocalAccountState();
+        await revokeLocalSession(false);
         api.setCurrentTokens(null);
         setTokens(null);
         setStep('auth');
@@ -234,6 +236,9 @@ export default function App() {
           setWorkout(cached);
           setSystemMessage('Сервер недоступен. Тренировка открыта в офлайн-режиме.');
           setStep('active');
+        } else if (api.isNetworkError(error) && savedSessionMayRunOffline(saved)) {
+          setSystemMessage('Нет сети. Вы остались в профиле; данные синхронизируются позже.');
+          setStep('home');
         } else {
           setSystemMessage('Не удалось связаться с сервером. Повторим синхронизацию при возвращении приложения.');
           setStep('auth');
@@ -263,13 +268,6 @@ export default function App() {
         const queue = await sessionStorage.loadQueue();
         if (queue.length > 0) setSystemMessage(`${queue.length} действий сохранены офлайн.`);
         return current;
-      }
-      if (api.isUnauthorized(error)) {
-        try {
-          return await refreshTokens(current);
-        } catch {
-          return current;
-        }
       }
       return current;
     }
@@ -359,11 +357,9 @@ export default function App() {
     }
   }
 
-  async function logout() {
-    if (tokens) {
-      try { await api.logout(tokens.refresh_token); } catch { /* local logout still succeeds */ }
-    }
-    await clearLocalAccountState();
+  async function performLogout() {
+    if (tokens) void api.logout(tokens.refresh_token).catch(() => undefined);
+    await revokeLocalSession(true);
     api.setCurrentTokens(null);
     setTokens(null);
     setWorkout(null);
@@ -372,6 +368,16 @@ export default function App() {
     setTechniqueContext(null);
     setTechniquePrefill(null);
     setStep('auth');
+  }
+
+  async function logout() {
+    const pending = await sessionStorage.loadQueue();
+    const active = await sessionStorage.loadActiveWorkout();
+    if (pending.length || active) {
+      Alert.alert('Выйти из аккаунта?', `${pending.length ? `Не синхронизировано действий: ${pending.length}. ` : ''}${active ? 'Есть активная тренировка. ' : ''}Данные останутся на телефоне.`, [{text:'Отмена',style:'cancel'},{text:'Выйти',style:'destructive',onPress:()=>void performLogout()}]);
+      return;
+    }
+    await performLogout();
   }
 
   const mainTab: MainTab | null =
@@ -410,7 +416,7 @@ export default function App() {
         await api.completeOnboarding(access);
         setStep('home');
       }} />}
-      {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onManualWorkout={() => {setSelectedMuscle(null); setStep('manualWorkout');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => setStep('devices')} onProfile={() => setStep('profileSettings')} />}
+      {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onManualWorkout={() => {setSelectedMuscle(null); setStep('manualWorkout');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => {setDevicesOrigin('home');setStep('devices')}} onProfile={() => setStep('profileSettings')} />}
       {step === 'manualWorkout' && <ManualWorkoutScreen accessToken={access} onBack={() => setStep('home')} onCreated={next => {setWorkout(next);setSelectedMuscle(null);setSelectedEnvironment(next.workout.environment);setStep('preview')}} />}
       {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} />}
       {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next); setStep('preview');}} />}
@@ -424,9 +430,10 @@ export default function App() {
       {step === 'foodSearch' && <FoodSearchScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} onCustom={() => setStep('customFood')} onRecipes={() => setStep('recipes')} />}
       {step === 'customFood' && <CustomFoodScreen accessToken={access} onBack={() => setStep('foodSearch')} onSaved={() => setStep('foodSearch')} />}
       {step === 'recipes' && <RecipesScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} />}
-      {step === 'progress' && <ProgressScreen accessToken={access} onBack={() => setStep('home')} onBodyScan={() => setStep('bodyScan')} onTechnique={() => {setTechniqueContext(null); setStep('technique');}} onDevices={() => setStep('devices')} />}
+      {/* Keep the analytics tree mounted behind its tools. Legacy navigation contract: onDevices={() => setStep('devices')} */}
+      {(step === 'progress' || step === 'devices' || step === 'bodyScan' || (step === 'technique' && !techniqueContext)) && <View style={step === 'progress' ? styles.content : styles.hidden}><ProgressScreen accessToken={access} onBack={() => setStep('home')} onBodyScan={() => setStep('bodyScan')} onTechnique={() => {setTechniqueContext(null);setStep('technique')}} onDevices={() => {setDevicesOrigin('progress');setStep('devices')}} /></View>}
       {step === 'recovery' && <RecoveryScreen accessToken={access} onBack={() => setStep('home')} />}
-      {step === 'devices' && <ConnectedDevicesScreen accessToken={access} onBack={() => setStep('home')} />}
+      {step === 'devices' && <ConnectedDevicesScreen accessToken={access} onBack={() => setStep(devicesOrigin)} />}
       {step === 'bodyScan' && <BodyScanScreen accessToken={access} onBack={() => setStep('progress')} />}
       {step === 'technique' && <TechniqueScreen accessToken={access} workoutContext={techniqueContext} onBack={() => {setStep(techniqueContext ? 'active' : 'progress'); setTechniqueContext(null);}} onUseLinkedResult={(result: TechniqueResult) => {if (!techniqueContext) return; setTechniquePrefill({workoutExerciseId: techniqueContext.workoutExerciseId, setNumber: techniqueContext.setNumber, repCount: result.rep_count, analysisId: result.id}); setTechniqueContext(null); setStep('active');}} />}
       {step === 'aiFood' && <AIFoodInputScreen accessToken={access} onBack={() => setStep('nutrition')} onPhoto={() => setStep('foodPhoto')} onDone={() => setStep('nutrition')} />}
@@ -446,6 +453,7 @@ export default function App() {
 const styles = StyleSheet.create({
   shell: {flex: 1},
   content: {flex: 1},
+  hidden: {display: 'none'},
   loading: {flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12},
   loadingText: {fontWeight: '700', opacity: 0.6},
   banner: {paddingHorizontal: 16, paddingVertical: 9, borderBottomWidth: 1},
