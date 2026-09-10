@@ -40,7 +40,7 @@ await sessionStorage.saveTokens(token('A'), 'user-A');
 await sessionStorage.enqueueSet('workout-A', {workout_exercise_id: 'exercise-A', set_number: 1, repetitions: 10});
 assert.equal((await sessionStorage.loadQueue()).length, 1);
 
-// Even without an explicit cleanup, changing account ownership hides and deletes A's envelope.
+// Changing account ownership hides A without deleting A's local recovery data.
 await sessionStorage.saveTokens(token('B'), 'user-B');
 assert.equal((await sessionStorage.loadQueue()).length, 0, 'user B must never see user A queue');
 
@@ -48,4 +48,12 @@ await sessionStorage.enqueueSet('workout-B', {workout_exercise_id: 'exercise-B',
 assert.equal((await sessionStorage.loadQueue()).length, 1);
 await sessionStorage.clearTransientData();
 assert.equal((await sessionStorage.loadQueue()).length, 0, 'logout cleanup must clear queue');
+await sessionStorage.saveTokens(token('A'), 'user-A');
+assert.equal((await sessionStorage.loadQueue()).length, 1, 'returning user A must recover user A queue');
+await sessionStorage.revokeCurrentSession();
+assert.equal(await sessionStorage.isSessionRevoked('user-A'), true, 'server 401 must leave an owner-scoped revoked marker');
+assert.equal((await sessionStorage.loadQueue()).length, 0, 'revoked credentials must not expose data without an authenticated owner');
+await sessionStorage.saveTokens(token('A'), 'user-A');
+assert.equal((await sessionStorage.loadQueue()).length, 1, 'new login by A must restore preserved owner data');
+assert.equal(await sessionStorage.isSessionRevoked('user-A'), false, 'successful login clears A revoked marker');
 console.log('mobile session scope: PASS');

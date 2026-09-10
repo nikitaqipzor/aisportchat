@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, Readiness} from '../api/client';
 import {currentLocalDate} from '../domain/date';
@@ -6,6 +6,8 @@ import {AppButton} from '../components/AppButton';
 import {BodyMap} from '../components/BodyMap';
 import {MuscleId, muscleIds, muscleMeta} from '../domain/muscles';
 import {colors, control, radius, spacing} from '../theme/tokens';
+import {LatestRequestGuard} from '../domain/latestRequest';
+import {sessionStorage} from '../storage/session';
 
 type Environment = 'home' | 'gym' | 'band';
 
@@ -36,25 +38,52 @@ export function HomeScreen({
   onDevices: () => void;
   onProfile: () => void;
 }) {
-  const [environment, setEnvironment] = useState<Environment>('gym');
-  const [allowedEnvironments, setAllowedEnvironments] = useState<Environment[]>(['gym']);
+  const [environment, setEnvironment] = useState<Environment | null>(null);
+  const [allowedEnvironments, setAllowedEnvironments] = useState<Environment[]>([]);
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [readinessLoading, setReadinessLoading] = useState(true);
   const [readinessError, setReadinessError] = useState(false);
+  const [profileState, setProfileState] = useState<'loading'|'loaded'|'cached-stale'|'error'>('loading');
+  const profileGuard = useRef(new LatestRequestGuard());
+  const readinessGuard = useRef(new LatestRequestGuard());
+
+  const loadProfile = useCallback(async () => {
+    const isLatest = profileGuard.current.begin();
+    setProfileLoading(true); setProfileState('loading');
+    const initiatingOwner = await sessionStorage.currentUserId();
+    try {
+      const profile = await api.getProfile(accessToken);
+      const allowed = (profile.training_preferences?.environments ?? []) as Environment[];
+      if (!isLatest()) return;
+      setAllowedEnvironments(allowed);
+      setEnvironment(current => current && allowed.includes(current) ? current : allowed[0] ?? null);
+      setProfileState('loaded');
+      if (allowed.length) void sessionStorage.saveTrainingEnvironments(allowed, initiatingOwner);
+    } catch {
+      const cached = await sessionStorage.loadTrainingEnvironments();
+      if (!isLatest()) return;
+      if (cached?.environments.length) {
+        setAllowedEnvironments(cached.environments);
+        setEnvironment(current => current && cached.environments.includes(current) ? current : cached.environments[0]);
+        setProfileState('cached-stale');
+      } else {
+        setAllowedEnvironments([]); setEnvironment(null); setProfileState('error');
+      }
+    } finally { if (isLatest()) setProfileLoading(false); }
+  }, [accessToken]);
 
   useEffect(() => {
-    setProfileLoading(true);
-    api.getProfile(accessToken).then(profile => {
-      const allowed = (profile.training_preferences?.environments ?? []) as Environment[];
-      if (allowed.length > 0) {
-        setAllowedEnvironments(allowed);
-        if (!allowed.includes(environment)) setEnvironment(allowed[0]);
-      }
-    }).catch(() => undefined).finally(() => setProfileLoading(false));
+    void loadProfile();
+    const isLatest = readinessGuard.current.begin();
     setReadinessLoading(true); setReadinessError(false);
-    api.recoveryToday(accessToken, currentLocalDate()).then(setReadiness).catch(() => setReadinessError(true)).finally(() => setReadinessLoading(false));
-  }, [accessToken]);
+    api.recoveryToday(accessToken, currentLocalDate()).then(value => {if(isLatest())setReadiness(value)}).catch(() => {if(isLatest())setReadinessError(true)}).finally(() => {if(isLatest())setReadinessLoading(false)});
+    return () => { profileGuard.current.invalidate(); readinessGuard.current.invalidate(); };
+  }, [accessToken, loadProfile]);
+
+  useEffect(() => () => {profileGuard.current.unmount();readinessGuard.current.unmount()}, []);
+
+  const environmentReady = environment !== null && allowedEnvironments.includes(environment);
 
   return (
     <ScrollView testID="home-screen" contentContainerStyle={styles.container}>
@@ -132,9 +161,12 @@ export function HomeScreen({
 
       <Text accessibilityRole="header" style={styles.title}>Что тренируем сегодня?</Text>
       <Text style={styles.subtitle}>Выбери место тренировки, затем группу мышц. На следующем экране увидишь историю нагрузки и персональную тренировку.</Text>
-      <AppButton label="Собрать тренировку вручную" variant="secondary" testID="home-manual-workout" onPress={onManualWorkout} />
+      <AppButton label="Собрать тренировку вручную" variant="secondary" testID="home-manual-workout" disabled={!environmentReady} onPress={onManualWorkout} />
 
       {profileLoading ? <View accessibilityRole="progressbar" accessibilityLabel="Загрузка мест тренировки" style={styles.inlineLoading}><ActivityIndicator size="small"/><Text style={styles.programMeta}>Загружаем доступные места…</Text></View> : null}
+      {profileState === 'cached-stale' ? <View style={styles.notice}><Text style={styles.noticeText}>Показаны сохранённые места тренировок. Данные могут быть устаревшими.</Text><AppButton label="Повторить" variant="secondary" onPress={() => void loadProfile()}/></View> : null}
+      {profileState === 'error' ? <View style={styles.notice}><Text accessibilityRole="alert" style={styles.error}>Не удалось проверить места тренировок. Выбор мышц и ручная тренировка временно недоступны.</Text><AppButton label="Повторить" variant="secondary" testID="home-profile-retry" onPress={() => void loadProfile()}/></View> : null}
+      {profileState === 'loaded' && allowedEnvironments.length === 0 ? <View style={styles.notice}><Text style={styles.error}>В профиле не выбрано место тренировки.</Text><AppButton label="Открыть профиль" variant="secondary" onPress={onProfile}/></View> : null}
       <View style={styles.segment} accessibilityRole="tablist">
         {environments.filter(item => allowedEnvironments.includes(item.id)).map(item => {
           const selected = environment === item.id;
@@ -154,7 +186,7 @@ export function HomeScreen({
         })}
       </View>
 
-      <BodyMap onSelect={muscle => onMuscle(muscle, environment)} />
+      {environmentReady ? <BodyMap onSelect={muscle => onMuscle(muscle, environment)} /> : <View testID="home-body-map-blocked" style={styles.blocked}><Text style={styles.programMeta}>Карта мышц станет доступна после проверки места тренировки.</Text></View>}
 
       <Text style={styles.sectionTitle}>Все группы мышц</Text>
       <View style={styles.grid}>
@@ -164,8 +196,10 @@ export function HomeScreen({
             accessibilityRole="button"
             accessibilityLabel={`Открыть тренировку: ${muscleMeta[id].title}`}
             testID={`muscle-${id}`}
-            onPress={() => onMuscle(id, environment)}
-            style={({pressed}) => [styles.card, pressed && styles.pressed]}>
+            disabled={!environmentReady}
+            accessibilityState={{disabled: !environmentReady}}
+            onPress={() => {if(environment)onMuscle(id, environment)}}
+            style={({pressed}) => [styles.card, !environmentReady && styles.disabled, pressed && styles.pressed]}>
             <Text style={styles.cardTitle}>{muscleMeta[id].title}</Text>
             <Text style={styles.cardMeta}>Открыть →</Text>
           </Pressable>
@@ -213,4 +247,8 @@ const styles = StyleSheet.create({
   pressed: {opacity: 0.7},
   inlineLoading: {minHeight: control.minTouch, flexDirection: 'row', alignItems: 'center', gap: spacing.sm},
   disabled: {opacity: 0.45},
+  notice: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.md, padding: spacing.md, gap: spacing.sm},
+  noticeText: {color: colors.textMuted, lineHeight: 19},
+  error: {color: colors.danger, fontWeight: '700', lineHeight: 19},
+  blocked: {minHeight: 120, borderWidth: 1, borderStyle: 'dashed', borderColor: colors.border, borderRadius: radius.lg, alignItems: 'center', justifyContent: 'center', padding: spacing.lg},
 });

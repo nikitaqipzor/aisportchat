@@ -96,6 +96,7 @@ func NewServerWithAIAndMedia(st store.Store, tm *auth.TokenManager, aiProvider a
 	mux.Handle("PATCH /api/v1/profile", s.requireAuth(http.HandlerFunc(s.updateProfile)))
 	mux.Handle("PUT /api/v1/profile/goal", s.requireAuth(http.HandlerFunc(s.setGoal)))
 	mux.Handle("PUT /api/v1/profile/training-preferences", s.requireAuth(http.HandlerFunc(s.setTrainingPreferences)))
+	mux.Handle("PUT /api/v1/profile/athlete", s.requireAuth(http.HandlerFunc(s.setAthleteProfile)))
 	mux.Handle("GET /api/v1/onboarding/status", s.requireAuth(http.HandlerFunc(s.getOnboardingStatus)))
 	mux.Handle("POST /api/v1/onboarding/complete", s.requireAuth(http.HandlerFunc(s.completeOnboarding)))
 
@@ -414,6 +415,77 @@ func (s *Server) setTrainingPreferences(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) setAthleteProfile(w http.ResponseWriter, r *http.Request) {
+	var in store.AthleteProfileUpdate
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	if err := validateAthleteProfileUpdate(in); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	out, err := s.store.SaveAthleteProfile(r.Context(), currentUserID(r.Context()), in)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "athlete profile update failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func validateAthleteProfileUpdate(in store.AthleteProfileUpdate) error {
+	p := in.Profile
+	if p.HeightCM == nil || *p.HeightCM < 100 || *p.HeightCM > 250 {
+		return errors.New("height_cm must be between 100 and 250")
+	}
+	if p.WeightKG == nil || *p.WeightKG < 30 || *p.WeightKG > 400 {
+		return errors.New("weight_kg must be between 30 and 400")
+	}
+	if p.ExperienceLevel == nil {
+		return errors.New("experience_level is required")
+	}
+	if err := profile.ValidateLevel(*p.ExperienceLevel); err != nil {
+		return err
+	}
+	if p.AgeYears == nil || *p.AgeYears < 14 || *p.AgeYears > 100 {
+		return errors.New("age_years must be between 14 and 100")
+	}
+	if err := profile.ValidateNotes("injuries", p.Injuries); err != nil {
+		return err
+	}
+	if err := profile.ValidateNotes("limitations", p.Limitations); err != nil {
+		return err
+	}
+	if p.UnitSystem != "metric" && p.UnitSystem != "imperial" {
+		return errors.New("unit_system must be metric or imperial")
+	}
+	if err := profile.ValidateGoal(in.Goal.GoalType); err != nil {
+		return err
+	}
+	if in.Goal.TargetWeight != nil && (*in.Goal.TargetWeight < 30 || *in.Goal.TargetWeight > 400) {
+		return errors.New("target_weight_kg must be between 30 and 400")
+	}
+	prefs := in.TrainingPreferences
+	if err := profile.ValidateEnvironments(prefs.Environments); err != nil {
+		return err
+	}
+	if prefs.WorkoutsPerWeek < 1 || prefs.WorkoutsPerWeek > 14 {
+		return errors.New("workouts_per_week must be between 1 and 14")
+	}
+	if prefs.SessionMinutes < 10 || prefs.SessionMinutes > 180 {
+		return errors.New("session_minutes must be between 10 and 180")
+	}
+	allowedEq := map[string]bool{}
+	for _, e := range catalog.Equipment {
+		allowedEq[e.ID] = true
+	}
+	for _, id := range prefs.EquipmentIDs {
+		if !allowedEq[id] {
+			return errors.New("unsupported equipment_id: " + id)
+		}
+	}
+	return nil
 }
 
 func (s *Server) getOnboardingStatus(w http.ResponseWriter, r *http.Request) {

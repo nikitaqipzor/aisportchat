@@ -124,6 +124,27 @@ paths:
       responses:
         '200':
           description: Updated training preferences
+  /profile/athlete:
+    put:
+      operationId: setAthleteProfile
+      description: Atomically replace body profile, goal and training preferences for the authenticated user.
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AthleteProfileUpdate'
+      responses:
+        '200':
+          description: Atomically updated athlete profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AthleteProfileUpdate'
+        '422':
+          description: Invalid aggregate profile
   /onboarding/status:
     get:
       operationId: getOnboardingStatus
@@ -2862,6 +2883,28 @@ components:
           type: integer
           minimum: 10
           maximum: 180
+    AthleteProfileUpdate:
+      type: object
+      required:
+      - profile
+      - goal
+      - training_preferences
+      properties:
+        profile:
+          allOf:
+          - $ref: '#/components/schemas/ProfilePatch'
+          required:
+          - height_cm
+          - weight_kg
+          - experience_level
+          - age_years
+          - injuries
+          - limitations
+          - unit_system
+        goal:
+          $ref: '#/components/schemas/GoalRequest'
+        training_preferences:
+          $ref: '#/components/schemas/TrainingPreferencesRequest'
     OnboardingStatus:
       type: object
       required:

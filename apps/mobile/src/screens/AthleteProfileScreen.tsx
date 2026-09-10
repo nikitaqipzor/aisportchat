@@ -1,8 +1,9 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {api, ProfileResponse} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
+import {LatestRequestGuard} from '../domain/latestRequest';
 
 const goals = [['muscle_gain','Набор мышц'],['fat_loss','Снижение веса'],['recomposition','Рекомпозиция'],['strength','Сила'],['endurance','Выносливость'],['maintenance','Здоровье']] as const;
 const levels = [['beginner','Новичок'],['intermediate','Средний'],['advanced','Продвинутый']] as const;
@@ -16,13 +17,15 @@ const number=(value:string)=>Number(value.replace(',','.'));
 
 export function AthleteProfileScreen({accessToken,onBack,onLogout}:{accessToken:string;onBack:()=>void;onLogout:()=>void}) {
   const [form,setForm]=useState<Form>(empty); const [loading,setLoading]=useState(true); const [saving,setSaving]=useState(false); const [error,setError]=useState(''); const [saved,setSaved]=useState(false);
-  const load=useCallback(async()=>{try{setLoading(true);setError('');const data=await api.getProfile(accessToken);setForm(fromProfile(data));}catch(e){setError(e instanceof Error?e.message:'Не удалось загрузить профиль.')}finally{setLoading(false)}},[accessToken]);
-  useEffect(()=>{void load()},[load]);
+  const loadGuard=useRef(new LatestRequestGuard());
+  const load=useCallback(async()=>{const isLatest=loadGuard.current.begin();try{setLoading(true);setError('');const data=await api.getProfile(accessToken);if(isLatest())setForm(fromProfile(data));}catch(e){if(isLatest())setError(e instanceof Error?e.message:'Не удалось загрузить профиль.')}finally{if(isLatest())setLoading(false)}},[accessToken]);
+  useEffect(()=>{void load();return()=>loadGuard.current.invalidate()},[load]);
+  useEffect(()=>()=>loadGuard.current.unmount(),[]);
   const height=number(form.height),weight=number(form.weight),age=Number(form.age);
   const validation=!Number.isFinite(height)||height<100||height>250?'Рост должен быть от 100 до 250 см.':!Number.isFinite(weight)||weight<30||weight>400?'Вес должен быть от 30 до 400 кг.':!Number.isInteger(age)||age<14||age>100?'Возраст должен быть от 14 до 100 лет.':form.environments.length===0?'Выберите хотя бы одно место тренировки.':form.equipment.length===0?'Выберите хотя бы один вариант оборудования.':lines(form.injuries).some(x=>x.length>120)||lines(form.limitations).some(x=>x.length>120)?'Каждое ограничение — не более 120 символов.':'';
   const patch=(value:Partial<Form>)=>{setForm(current=>({...current,...value}));setSaved(false);setError('')};
   const toggle=(key:'environments'|'equipment',value:string)=>patch({[key]:form[key].includes(value)?form[key].filter(x=>x!==value):[...form[key],value]} as Partial<Form>);
-  async function save(){if(validation||saving)return;try{setSaving(true);setError('');await api.updateProfile(accessToken,{height_cm:height,weight_kg:weight,age_years:age,experience_level:form.level,injuries:lines(form.injuries),limitations:lines(form.limitations),unit_system:'metric'});await api.setGoal(accessToken,form.goal);await api.setTrainingPreferences(accessToken,{environments:form.environments,equipment_ids:form.equipment,workouts_per_week:form.workouts,session_minutes:form.minutes});setSaved(true);}catch(e){setError(e instanceof Error?e.message:'Не удалось сохранить профиль. Изменения можно повторить.')}finally{setSaving(false)}}
+  async function save(){if(validation||saving)return;try{setSaving(true);setError('');await api.setAthleteProfile(accessToken,{profile:{height_cm:height,weight_kg:weight,age_years:age,experience_level:form.level,injuries:lines(form.injuries),limitations:lines(form.limitations),unit_system:'metric'},goal:{goal_type:form.goal},training_preferences:{environments:form.environments,equipment_ids:form.equipment,workouts_per_week:form.workouts,session_minutes:form.minutes}});setSaved(true);}catch(e){setError(e instanceof Error?e.message:'Не удалось сохранить профиль. Изменения можно повторить.')}finally{setSaving(false)}}
   if(loading)return <View style={styles.center} accessibilityRole="progressbar"><ActivityIndicator/><Text style={styles.muted}>Загружаем профиль…</Text></View>;
   if(error&&!form.height)return <View style={styles.center}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><AppButton label="Повторить" onPress={()=>void load()}/><AppButton label="Назад" variant="secondary" onPress={onBack}/></View>;
   return <ScrollView testID="athlete-profile-screen" keyboardShouldPersistTaps="handled" contentContainerStyle={styles.container}>

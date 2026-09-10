@@ -51,6 +51,15 @@ type TrainingPreferences struct {
 	UpdatedAt       time.Time `json:"updated_at"`
 }
 
+// AthleteProfileUpdate is the aggregate profile write contract. UserID values
+// in its nested records are ignored; the authenticated userID argument passed
+// to SaveAthleteProfile is the sole ownership source.
+type AthleteProfileUpdate struct {
+	Profile             Profile             `json:"profile"`
+	Goal                Goal                `json:"goal"`
+	TrainingPreferences TrainingPreferences `json:"training_preferences"`
+}
+
 type OnboardingStatus struct {
 	ProfileCompleted  bool `json:"profile_completed"`
 	GoalCompleted     bool `json:"goal_completed"`
@@ -325,6 +334,7 @@ type Store interface {
 	GetGoal(ctx context.Context, userID string) (Goal, error)
 	SetTrainingPreferences(ctx context.Context, prefs TrainingPreferences) (TrainingPreferences, error)
 	GetTrainingPreferences(ctx context.Context, userID string) (TrainingPreferences, error)
+	SaveAthleteProfile(ctx context.Context, userID string, update AthleteProfileUpdate) (AthleteProfileUpdate, error)
 	GetOnboardingStatus(ctx context.Context, userID string) (OnboardingStatus, error)
 	CompleteOnboarding(ctx context.Context, userID string) (OnboardingStatus, error)
 

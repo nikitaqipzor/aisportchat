@@ -70,6 +70,10 @@ jobs:
           node scripts/test-mobile-technique-mapping.mjs
           node scripts/test-mobile-health-passive-sync.mjs
           node scripts/test-mobile-core-screens.mjs
+          node scripts/test-mobile-analytics-races.mjs
+          node scripts/test-mobile-home-reliability.mjs
+          node scripts/test-mobile-nutrition-regressions.mjs
+          node scripts/test-mobile-rest-timer.mjs
 
   android-internal:
     runs-on: ubuntu-latest

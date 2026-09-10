@@ -93,11 +93,11 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     </Pressable>
     <Text style={styles.kicker}>УСТРОЙСТВА</Text>
     <Text accessibilityRole="header" style={styles.title}>Подключённые устройства</Text>
-    <Text style={styles.intro}>Импортируй активность и сон из Health Connect. Приложение читает только выбранные тобой категории.</Text>
+    <Text style={styles.intro}>Импортируй активность и сон из Health Connect. Конкретная модель часов определяется приложением-поставщиком и может быть неизвестна.</Text>
 
     <View style={styles.connectionCard} testID="health-connection-progress">
       <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.connectionEyebrow}>ПОДКЛЮЧЕНИЕ</Text><Text style={styles.connectionTitle}>{connectionStep===5?'Часы подключены':`Шаг ${connectionStep} из 4`}</Text></View><Text style={[styles.connectionBadge,connectionStep===5&&styles.connectionBadgeReady]}>{connectionStep===5?'ГОТОВО':'НАСТРОЙКА'}</Text></View>
-      <ConnectionStep number={1} title="Mi Fitness" detail={status?.mi_fitness_installed?'Приложение найдено':'Установите Mi Fitness и синхронизируйте часы'} done={connectionStep>1}/>
+      <ConnectionStep number={1} title="Приложение часов" detail={status?.mi_fitness_installed?'Mi Fitness найден. Модель часов не определяется':'Подключите часы к совместимому приложению, например Mi Fitness'} done={connectionStep>1}/>
       <ConnectionStep number={2} title="Health Connect" detail={available?'Доступен':'Установите или обновите Health Connect'} done={connectionStep>2}/>
       <ConnectionStep number={3} title="Разрешения" detail={granted?'Доступ выдан':'Разрешите чтение выбранных показателей'} done={connectionStep>3}/>
       <ConnectionStep number={4} title="Первая синхронизация" detail={snapshot?'Данные получены':'Синхронизируйте данные за сегодня'} done={connectionStep>4}/>
@@ -106,11 +106,11 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     {initialLoading?<View accessibilityLiveRegion="polite" style={styles.loadingCard}><ActivityIndicator color={colors.text}/><Text style={styles.meta}>Проверяем устройство и данные…</Text></View>:null}
     {loadError?<View style={styles.errorCard}><Text accessibilityRole="alert" style={styles.errorText}>{loadError}</Text><AppButton label="Повторить проверку" variant="secondary" disabled={initialLoading||busy} loading={initialLoading} onPress={()=>void load()} testID="health-retry-load"/></View>:null}
 
-    <View style={styles.deviceCard} accessible accessibilityLabel={`Xiaomi Watch S3. ${miFitnessState}`}>
+    <View style={styles.deviceCard} accessible accessibilityLabel={`Источник данных Health Connect. Модель устройства неизвестна. ${miFitnessState}`}>
       <View style={styles.icon} accessible={false}><Text style={styles.iconText}>⌚</Text></View>
       <View style={styles.flex} accessible={false}>
-        <Text style={styles.deviceName}>Xiaomi Watch S3</Text>
-        <Text style={styles.meta}>Mi Fitness → Health Connect → AI Fitness OS</Text>
+        <Text style={styles.deviceName}>Устройство через Health Connect</Text>
+        <Text style={styles.meta}>{status?.mi_fitness_installed?'Mi Fitness найден · модель часов неизвестна':'Поставщик и модель пока неизвестны'}</Text>
         <Text style={styles.state}>{miFitnessState}</Text>
       </View>
     </View>

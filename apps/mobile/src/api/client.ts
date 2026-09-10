@@ -37,6 +37,25 @@ export type ProfileResponse = {
   };
 };
 
+export type AthleteProfileUpdate = {
+  profile: {
+    height_cm: number;
+    weight_kg: number;
+    experience_level: string;
+    age_years: number;
+    injuries: string[];
+    limitations: string[];
+    unit_system: 'metric' | 'imperial';
+  };
+  goal: {goal_type: string; target_weight_kg?: number};
+  training_preferences: {
+    environments: string[];
+    equipment_ids: string[];
+    workouts_per_week: number;
+    session_minutes: number;
+  };
+};
+
 export type WorkoutSet = {
   id: string;
   workout_exercise_id: string;
@@ -574,6 +593,15 @@ export class ApiError extends Error {
   }
 }
 
+export class ApiNetworkError extends Error {
+  cause?: unknown;
+  constructor(message = 'Сервер недоступен. Проверьте соединение.', cause?: unknown) {
+    super(message);
+    this.name = 'ApiNetworkError';
+    this.cause = cause;
+  }
+}
+
 type AuthSessionAdapter = {
   loadTokens: () => Promise<AuthTokens | null>;
   saveTokens: (tokens: AuthTokens) => Promise<void>;
@@ -583,7 +611,11 @@ type AuthSessionAdapter = {
 
 let authSessionAdapter: AuthSessionAdapter | null = null;
 let latestTokens: AuthTokens | null = null;
+let authRefreshIdentity: string | null = null;
 let refreshInFlight: Promise<AuthTokens> | null = null;
+let authGeneration = 0;
+let refreshController: AbortController | null = null;
+const REQUEST_TIMEOUT_MS = 30_000;
 
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
@@ -595,48 +627,76 @@ async function parseResponse<T>(response: Response): Promise<T> {
 }
 
 async function rawRequest<T>(path: string, options: RequestInit = {}, accessToken?: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(accessToken ? {Authorization: `Bearer ${accessToken}`} : {}),
-      ...(options.headers ?? {}),
-    },
-  });
-  return parseResponse<T>(response);
+  const controller = new AbortController();
+  const upstream = options.signal;
+  const abort = () => controller.abort(upstream?.reason);
+  if (upstream?.aborted) abort();
+  else upstream?.addEventListener('abort', abort, {once: true});
+  const timer = setTimeout(() => controller.abort(new Error('timeout')), REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(accessToken ? {Authorization: `Bearer ${accessToken}`} : {}),
+        ...(options.headers ?? {}),
+      },
+    });
+    return await parseResponse<T>(response);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw new ApiNetworkError(controller.signal.aborted && !upstream?.aborted ? 'Превышено время ожидания сервера.' : undefined, error);
+  } finally {
+    clearTimeout(timer);
+    upstream?.removeEventListener('abort', abort);
+  }
 }
 
 async function getCurrentTokens(): Promise<AuthTokens | null> {
   if (latestTokens) return latestTokens;
   if (!authSessionAdapter) return null;
   latestTokens = await authSessionAdapter.loadTokens();
+  authRefreshIdentity = latestTokens?.refresh_token ?? null;
   return latestTokens;
 }
 
 async function rotateAccessToken(fallbackRefreshToken?: string): Promise<AuthTokens> {
   if (refreshInFlight) return refreshInFlight;
+  const generation = authGeneration;
+  const controller = new AbortController();
+  refreshController = controller;
   refreshInFlight = (async () => {
-    const current = await getCurrentTokens();
-    const refreshToken = current?.refresh_token ?? fallbackRefreshToken;
-    if (!refreshToken) throw new ApiError(401, 'Session expired');
+    const origin = (await getCurrentTokens())?.refresh_token ?? fallbackRefreshToken;
+    const shouldCommit = () => generation === authGeneration && authRefreshIdentity === origin;
+    if (!origin) throw new ApiError(401, 'Session expired');
     try {
       const response = await rawRequest<{tokens: AuthTokens}>('/auth/refresh', {
         method: 'POST',
-        body: JSON.stringify({refresh_token: refreshToken}),
+        body: JSON.stringify({refresh_token: origin}),
+        signal: controller.signal,
       });
+      if (!shouldCommit()) throw new ApiNetworkError('Сессия изменилась во время обновления.');
       latestTokens = response.tokens;
-      await authSessionAdapter?.saveTokens(response.tokens);
-      authSessionAdapter?.onTokensChanged?.(response.tokens);
+      const adapter = authSessionAdapter;
+      if (adapter && shouldCommit()) await adapter.saveTokens(response.tokens);
+      if (!shouldCommit()) throw new ApiNetworkError('Сессия изменилась во время сохранения.');
+      authRefreshIdentity = response.tokens.refresh_token;
+      adapter?.onTokensChanged?.(response.tokens);
       return response.tokens;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
+      if (error instanceof ApiError && error.status === 401 && shouldCommit()) {
         latestTokens = null;
-        await authSessionAdapter?.clearTokens?.();
-        authSessionAdapter?.onTokensChanged?.(null);
+        const adapter = authSessionAdapter;
+        if (adapter && shouldCommit()) await adapter.clearTokens?.();
+        if (shouldCommit()) adapter?.onTokensChanged?.(null);
       }
       throw error;
     } finally {
-      refreshInFlight = null;
+      if (generation === authGeneration) {
+        refreshInFlight = null;
+        refreshController = null;
+      }
     }
   })();
   return refreshInFlight;
@@ -670,11 +730,20 @@ export type TechniqueAnalyzePayload = {
 export type TechniqueExercise = {key: 'squat'|'biceps_curl'|'push_up'|'lunge'|'shoulder_press'; name: string};
 export const api = {
   configureAuthSession(adapter: AuthSessionAdapter | null) {
+    authGeneration += 1;
+    refreshController?.abort();
     authSessionAdapter = adapter;
-    if (!adapter) { latestTokens = null; refreshInFlight = null; }
+    if (!adapter) { latestTokens = null; authRefreshIdentity = null; refreshInFlight = null; }
   },
   setCurrentTokens(tokens: AuthTokens | null) {
+    if (latestTokens?.refresh_token !== tokens?.refresh_token) {
+      authGeneration += 1;
+      refreshController?.abort();
+      refreshController = null;
+      refreshInFlight = null;
+    }
     latestTokens = tokens;
+    authRefreshIdentity = tokens?.refresh_token ?? null;
   },
   apiBaseUrl() {
     return API_BASE_URL;
@@ -683,7 +752,7 @@ export const api = {
     return error instanceof ApiError && error.status === 401;
   },
   isNetworkError(error: unknown) {
-    return !(error instanceof ApiError);
+    return error instanceof ApiNetworkError;
   },
   register(email: string, password: string) {
     return request<AuthResponse>('/auth/register', {method: 'POST', body: JSON.stringify({email, password})});
@@ -711,6 +780,9 @@ export const api = {
   },
   setTrainingPreferences(accessToken: string, payload: {environments: string[]; equipment_ids: string[]; workouts_per_week: number; session_minutes: number}) {
     return request('/profile/training-preferences', {method: 'PUT', body: JSON.stringify(payload)}, accessToken);
+  },
+  setAthleteProfile(accessToken: string, payload: AthleteProfileUpdate) {
+    return request<AthleteProfileUpdate>('/profile/athlete', {method: 'PUT', body: JSON.stringify(payload)}, accessToken);
   },
   completeOnboarding(accessToken: string) {
     return request<OnboardingStatus>('/onboarding/complete', {method: 'POST', body: '{}'}, accessToken);

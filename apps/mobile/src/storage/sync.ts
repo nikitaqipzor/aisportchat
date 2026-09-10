@@ -11,13 +11,16 @@ export type SyncResult = {
 };
 
 export async function flushOfflineQueue(tokens: AuthTokens): Promise<SyncResult> {
-  let currentTokens = tokens;
+  const currentTokens = tokens;
+  const ownerAtStart = await sessionStorage.currentUserId();
+  const ownerIsCurrent = async () => ownerAtStart !== undefined && (await sessionStorage.currentUserId()) === ownerAtStart;
   const queue = await sessionStorage.loadQueue();
   const remaining: OfflineOperation[] = [];
   let latestWorkout: WorkoutView | undefined;
   let finish: FinishResult | undefined;
 
   for (let index = 0; index < queue.length; index += 1) {
+    if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
     const operation = queue[index];
     try {
       if (operation.type === 'log_set') {
@@ -28,22 +31,14 @@ export async function flushOfflineQueue(tokens: AuthTokens): Promise<SyncResult>
       } else {
         latestWorkout = await api.cancelWorkout(currentTokens.access_token, operation.workoutId);
       }
+      if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
     } catch (error) {
-      // Central API auth handles normal 401 refresh. Keep this fallback so the
-      // queue still works in isolated tests or before the adapter is configured.
-      if (api.isUnauthorized(error)) {
-        const refreshed = await api.refresh(currentTokens.refresh_token);
-        currentTokens = refreshed.tokens;
-        api.setCurrentTokens(currentTokens);
-        await sessionStorage.saveTokens(currentTokens);
-        index -= 1;
-        continue;
-      }
       remaining.push(...queue.slice(index));
       break;
     }
   }
 
+  if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
   await sessionStorage.saveQueue(remaining);
   if (latestWorkout) {
     await sessionStorage.saveActiveWorkout(latestWorkout.workout.status === 'active' ? latestWorkout : null);
