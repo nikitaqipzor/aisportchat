@@ -5,15 +5,23 @@ set -eu
 : "${PGPORT:=5432}"
 : "${PGUSER:=fitness}"
 : "${PGDATABASE:=fitness}"
+: "${MIGRATIONS_DIR:=/migrations}"
 
-psql -v ON_ERROR_STOP=1 \
-  -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" \
+run_psql() {
+  if [ -n "${DATABASE_URL:-}" ]; then
+    psql "$DATABASE_URL" "$@"
+  else
+    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" "$@"
+  fi
+}
+
+run_psql -v ON_ERROR_STOP=1 \
   -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"
 
-for file in /migrations/*.up.sql; do
+for file in "$MIGRATIONS_DIR"/*.up.sql; do
   [ -f "$file" ] || continue
   name="$(basename "$file")"
-  applied="$(psql -Atq -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -c "SELECT 1 FROM schema_migrations WHERE filename = '$name' LIMIT 1;")"
+  applied="$(run_psql -Atq -c "SELECT 1 FROM schema_migrations WHERE filename = '$name' LIMIT 1;")"
 
   if [ "$applied" = "1" ]; then
     echo "Skipping $name (already applied)"
@@ -26,5 +34,5 @@ for file in /migrations/*.up.sql; do
     cat "$file"
     printf "\nINSERT INTO schema_migrations(filename) VALUES ('%s');\n" "$name"
     echo "COMMIT;"
-  } | psql -v ON_ERROR_STOP=1 -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE"
+  } | run_psql -v ON_ERROR_STOP=1
 done

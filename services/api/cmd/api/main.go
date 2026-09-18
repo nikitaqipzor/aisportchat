@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	port := env("API_PORT", "8080")
+	port := resolvePort()
 	appEnv := env("APP_ENV", "development")
 	tokenSecret := env("AUTH_TOKEN_SECRET", "dev-only-change-me")
 	if err := validateRuntimeSecurity(appEnv, tokenSecret); err != nil {
@@ -48,6 +48,10 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func resolvePort() string {
+	return env("PORT", env("API_PORT", "8080"))
 }
 
 func buildStore(appEnv string) (store.Store, func()) {

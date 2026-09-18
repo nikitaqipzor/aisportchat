@@ -1,6 +1,40 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
+
+func TestResolvePort(t *testing.T) {
+	oldPort, hadPort := os.LookupEnv("PORT")
+	oldAPIPort, hadAPIPort := os.LookupEnv("API_PORT")
+	t.Cleanup(func() {
+		if hadPort {
+			_ = os.Setenv("PORT", oldPort)
+		} else {
+			_ = os.Unsetenv("PORT")
+		}
+		if hadAPIPort {
+			_ = os.Setenv("API_PORT", oldAPIPort)
+		} else {
+			_ = os.Unsetenv("API_PORT")
+		}
+	})
+
+	_ = os.Unsetenv("PORT")
+	_ = os.Unsetenv("API_PORT")
+	if got := resolvePort(); got != "8080" {
+		t.Fatalf("default port = %q, want 8080", got)
+	}
+	_ = os.Setenv("API_PORT", "9090")
+	if got := resolvePort(); got != "9090" {
+		t.Fatalf("API_PORT fallback = %q, want 9090", got)
+	}
+	_ = os.Setenv("PORT", "4242")
+	if got := resolvePort(); got != "4242" {
+		t.Fatalf("Railway PORT = %q, want 4242", got)
+	}
+}
 
 func TestValidateRuntimeSecurity(t *testing.T) {
 	tests := []struct {
