@@ -1,5 +1,5 @@
 import React, {useCallback, useEffect, useState} from 'react';
-import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, HealthDailySnapshot, HealthInsights} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {currentLocalDate} from '../domain/date';
@@ -13,8 +13,16 @@ function sleepLabel(minutes: number | undefined) { if (!minutes) return '—'; c
 function freshnessLabel(value: HealthInsights['freshness']['status']) { return value==='fresh'?'Свежие данные':value==='aging'?'Нужно обновить скоро':value==='stale'?'Данные устарели':'Нет данных'; }
 function confidenceLabel(value: HealthInsights['confidence']) { return value==='high'?'Высокая':value==='medium'?'Средняя':'Низкая'; }
 function signedPercent(value?: number) { if (value===undefined) return '—'; const rounded=Math.round(value); return `${rounded>0?'+':''}${rounded}%`; }
+function healthError(error: unknown, fallback: string) {
+  const message=error instanceof Error?error.message:'';
+  if(/permission|required|SecurityException/i.test(message)) return 'Не хватает разрешений Health Connect. Открой настройки, разреши нужные категории и повтори синхронизацию.';
+  if(/unavailable|not available|update_required/i.test(message)) return 'Health Connect недоступен или требует обновления. Открой системную страницу Health Connect.';
+  if(/network|fetch|timeout/i.test(message)) return 'Данные считаны, но не удалось отправить их на сервер. Проверь интернет и повтори.';
+  return message||fallback;
+}
+function permissionName(value:string){return value.includes('STEPS')?'шаги':value.includes('DISTANCE')?'дистанция':value.includes('ACTIVE_CALORIES')?'активные калории':value.includes('SLEEP')?'сон':value.includes('EXERCISE')?'тренировки':value.includes('HEART_RATE')?'пульс':value}
 
-export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;onBack:()=>void}) {
+export function ConnectedDevicesScreen({accessToken,onBack,origin='home'}:{accessToken:string;onBack:()=>void;origin?:'home'|'progress'}) {
   const [status,setStatus]=useState<HealthConnectStatus|null>(null);
   const [snapshot,setSnapshot]=useState<HealthDailySnapshot|null>(null);
   const [insights,setInsights]=useState<HealthInsights|null>(null);
@@ -48,14 +56,18 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     }
   },[accessToken]);
   useEffect(()=>{void load()},[load]);
+  useEffect(()=>{
+    const subscription=AppState.addEventListener('change',next=>{if(next==='active')void load()});
+    return ()=>subscription.remove();
+  },[load]);
 
   async function permissions(){
     try { setBusy(true); setBusyLabel('Запрашиваю разрешения…'); setMessage(''); const next=await healthConnect.requestPermissions(); setStatus(next); setMessageTone(next.permissions_granted?'success':'info'); setMessage(next.permissions_granted?'Доступ Health Connect разрешён. Теперь можно синхронизировать данные Mi Fitness.':'Разрешения не выданы. Без них синхронизация недоступна.'); }
-    catch(e){setMessageTone('error');setMessage(e instanceof Error?e.message:'Не удалось запросить разрешения.')} finally{setBusy(false);setBusyLabel('')}
+    catch(e){setMessageTone('error');setMessage(healthError(e,'Не удалось запросить разрешения.'))} finally{setBusy(false);setBusyLabel('')}
   }
   async function backgroundPermission(){
     try{setBusy(true);setBusyLabel('Запрашиваю фоновый доступ…');setMessage('');const next=await healthConnect.requestBackgroundPermission();setStatus(next);setMessageTone(next.background_read_granted?'success':'info');setMessage(next.background_read_granted?'Фоновое чтение Health Connect разрешено.':'Фоновое разрешение не выдано.');}
-    catch(e){setMessageTone('error');setMessage(e instanceof Error?e.message:'Не удалось запросить фоновое разрешение.')}finally{setBusy(false);setBusyLabel('')}
+    catch(e){setMessageTone('error');setMessage(healthError(e,'Не удалось запросить фоновое разрешение.'))}finally{setBusy(false);setBusyLabel('')}
   }
   async function togglePassive(enabled:boolean){
     try{setBusy(true);setBusyLabel(enabled?'Включаю пассивную синхронизацию…':'Выключаю пассивную синхронизацию…');setMessage('');const ownerUserId=await sessionStorage.currentUserId();if(!ownerUserId)throw new Error('Сессия пользователя не найдена');const next=await healthConnect.setPassiveSyncEnabled(ownerUserId,enabled);setStatus(next);setMessageTone('success');setMessage(enabled?'Пассивная синхронизация включена. Android будет периодически обновлять защищённый локальный кэш.':'Пассивная синхронизация выключена.');}
@@ -68,13 +80,15 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
       const result=await syncHealthDays(accessToken,days,(processed,total)=>setSyncProgress(`${processed}/${total} дней`));
       const [analysis,today,nativeStatus]=await Promise.all([api.healthInsights(accessToken,currentLocalDate()),api.healthToday(accessToken,currentLocalDate()).catch(()=>undefined),healthConnect.status()]);
       setStatus(nativeStatus); setSnapshot(today??result.latest??drained.latest??null); setInsights(analysis);
-      setMessageTone('success');setMessage(`Импортировано дней с данными: ${result.imported}${result.empty?` · пустых пропущено: ${result.empty}`:''}${drained.imported?` · из фонового кэша: ${drained.imported}`:''}. Recovery пересчитан.`);
-    } catch(e){setMessageTone('error');setMessage(e instanceof Error?e.message:'Синхронизация не удалась.')} finally{setBusy(false);setBusyLabel('');setSyncProgress('')}
+      const imported=result.imported+drained.imported;
+      if(imported===0){setMessageTone('info');setMessage(`Health Connect проверен: за ${result.processed} дн. нет данных. Открой Mi Fitness, дождись его синхронизации с часами и проверь доступ Mi Fitness в Health Connect.`)}
+      else{setMessageTone('success');setMessage(`Готово: импортировано ${imported} дн. с данными${result.empty?` · без записей: ${result.empty}`:''}. Recovery пересчитан · ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}.`)}
+    } catch(e){setMessageTone('error');setMessage(healthError(e,'Синхронизация не удалась.'))} finally{setBusy(false);setBusyLabel('');setSyncProgress('')}
   }
 
   async function openSettings(){
-    try{setBusy(true);setBusyLabel('Открываю настройки…');setMessage('');await healthConnect.openSettings();}
-    catch(e){setMessageTone('error');setMessage(e instanceof Error?e.message:'Не удалось открыть настройки Health Connect.')}finally{setBusy(false);setBusyLabel('')}
+    try{setBusy(true);setBusyLabel('Открываю Health Connect…');setMessage('');const opened=await healthConnect.openSettings();if(!opened)throw new Error('Система не смогла открыть Health Connect. Открой его вручную в настройках Android.');}
+    catch(e){setMessageTone('error');setMessage(healthError(e,'Не удалось открыть Health Connect.'))}finally{setBusy(false);setBusyLabel('')}
   }
 
   const available=status?.sdk_status==='available'; const granted=status?.permissions_granted===true;
@@ -85,19 +99,19 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     <Pressable
       onPress={onBack}
       accessibilityRole="button"
-      accessibilityLabel="Вернуться на главную"
+      accessibilityLabel={origin==='progress'?'Вернуться в аналитику':'Вернуться на главную'}
       accessibilityState={{disabled:busy}}
       disabled={busy}
       style={({pressed})=>[styles.backButton,pressed&&styles.pressed]}>
-      <Text style={styles.back}>← Главная</Text>
+      <Text style={styles.back}>← {origin==='progress'?'Аналитика':'Главная'}</Text>
     </Pressable>
     <Text style={styles.kicker}>УСТРОЙСТВА</Text>
     <Text accessibilityRole="header" style={styles.title}>Подключённые устройства</Text>
-    <Text style={styles.intro}>Импортируй активность и сон из Health Connect. Конкретная модель часов определяется приложением-поставщиком и может быть неизвестна.</Text>
+    <Text style={styles.intro}>Текущая версия импортирует активность и сон из Mi Fitness через Health Connect. Модель Xiaomi-часов Android не сообщает, поэтому она может отображаться как неизвестная.</Text>
 
     <View style={styles.connectionCard} testID="health-connection-progress">
-      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.connectionEyebrow}>ПОДКЛЮЧЕНИЕ</Text><Text style={styles.connectionTitle}>{connectionStep===5?'Часы подключены':`Шаг ${connectionStep} из 4`}</Text></View><Text style={[styles.connectionBadge,connectionStep===5&&styles.connectionBadgeReady]}>{connectionStep===5?'ГОТОВО':'НАСТРОЙКА'}</Text></View>
-      <ConnectionStep number={1} title="Приложение часов" detail={status?.mi_fitness_installed?'Mi Fitness найден. Модель часов не определяется':'Подключите часы к совместимому приложению, например Mi Fitness'} done={connectionStep>1}/>
+      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.connectionEyebrow}>ПОДКЛЮЧЕНИЕ MI FITNESS</Text><Text style={styles.connectionTitle}>{connectionStep===5?'Данные Mi Fitness получены':`Шаг ${connectionStep} из 4`}</Text></View><Text style={[styles.connectionBadge,connectionStep===5&&styles.connectionBadgeReady]}>{connectionStep===5?'ГОТОВО':'НАСТРОЙКА'}</Text></View>
+      <ConnectionStep number={1} title="Mi Fitness" detail={status?.mi_fitness_installed?'Mi Fitness найден. Модель часов не определяется':'Установите Mi Fitness и синхронизируйте с ним Xiaomi-часы'} done={connectionStep>1}/>
       <ConnectionStep number={2} title="Health Connect" detail={available?'Доступен':'Установите или обновите Health Connect'} done={connectionStep>2}/>
       <ConnectionStep number={3} title="Разрешения" detail={granted?'Доступ выдан':'Разрешите чтение выбранных показателей'} done={connectionStep>3}/>
       <ConnectionStep number={4} title="Первая синхронизация" detail={snapshot?'Данные получены':'Синхронизируйте данные за сегодня'} done={connectionStep>4}/>
@@ -109,7 +123,7 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     <View style={styles.deviceCard} accessible accessibilityLabel={`Источник данных Health Connect. Модель устройства неизвестна. ${miFitnessState}`}>
       <View style={styles.icon} accessible={false}><Text style={styles.iconText}>⌚</Text></View>
       <View style={styles.flex} accessible={false}>
-        <Text style={styles.deviceName}>Устройство через Health Connect</Text>
+        <Text style={styles.deviceName}>Mi Fitness через Health Connect</Text>
         <Text style={styles.meta}>{status?.mi_fitness_installed?'Mi Fitness найден · модель часов неизвестна':'Поставщик и модель пока неизвестны'}</Text>
         <Text style={styles.state}>{miFitnessState}</Text>
       </View>
@@ -118,9 +132,9 @@ export function ConnectedDevicesScreen({accessToken,onBack}:{accessToken:string;
     <View style={styles.card}>
       <Text accessibilityRole="header" style={styles.section}>Health Connect</Text>
       <Text style={styles.statusText}>{!status?'Статус пока неизвестен':available?'Доступен на устройстве':status.sdk_status==='update_required'?'Нужно установить или обновить Health Connect':'Health Connect недоступен на этом устройстве'}</Text>
-      <Text style={styles.meta}>{granted?'Разрешения выданы':'Нужны разрешения на шаги, дистанцию, активные калории, сон, тренировки и пульс.'}</Text>
+      <Text style={styles.meta}>{granted?'Разрешения выданы':status?.missing_permissions.length?`Не разрешено: ${status.missing_permissions.map(permissionName).join(' · ')}`:'Нужен доступ к фитнес-данным.'}</Text>
       {!granted&&available?<AppButton label="Разрешить доступ" accessibilityLabel="Разрешить Health Connect доступ к данным" onPress={()=>void permissions()} disabled={busy} loading={busy&&busyLabel==='Запрашиваю разрешения…'} testID="health-connect-permissions"/>:null}
-      <AppButton label="Открыть настройки Health Connect" variant="secondary" onPress={()=>void openSettings()} disabled={!available||busy} testID="health-connect-settings" />
+      <AppButton label={status?.sdk_status==='update_required'?'Установить или обновить Health Connect':'Открыть настройки Health Connect'} variant="secondary" onPress={()=>void openSettings()} disabled={!status||busy} testID="health-connect-settings" />
     </View>
 
     {granted&&status?.background_read_available?<View style={styles.card}>

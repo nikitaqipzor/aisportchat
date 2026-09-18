@@ -210,17 +210,17 @@ func (s *Service) validateWorkoutLink(ctx context.Context, userID, techniqueKey 
 }
 
 func techniqueKeyForExerciseID(id string) string {
-	id = strings.ToLower(strings.TrimSpace(id))
+	id = strings.NewReplacer(" ", "_", "-", "_").Replace(strings.ToLower(strings.TrimSpace(id)))
 	switch {
-	case id == "pushup" || strings.Contains(id, "push_up"):
+	case id == "pushup" || strings.Contains(id, "push_up") || strings.Contains(id, "pushup"):
 		return "push_up"
 	case strings.Contains(id, "squat") && !strings.Contains(id, "split"):
 		return "squat"
 	case strings.Contains(id, "split_squat") || strings.Contains(id, "lunge"):
 		return "lunge"
-	case strings.Contains(id, "curl"):
+	case strings.Contains(id, "biceps_curl"), strings.Contains(id, "bicep_curl"), strings.Contains(id, "dumbbell_curl"), strings.Contains(id, "barbell_curl"), strings.Contains(id, "hammer_curl"):
 		return "biceps_curl"
-	case strings.Contains(id, "overhead_press") || strings.Contains(id, "shoulder_press"):
+	case strings.Contains(id, "overhead_press"), strings.Contains(id, "shoulder_press"), strings.Contains(id, "military_press"), strings.Contains(id, "arnold_press"):
 		return "shoulder_press"
 	default:
 		return ""

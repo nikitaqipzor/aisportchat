@@ -2,6 +2,7 @@ package com.aifitnessos.healthconnect
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.HealthConnectFeatures
 import androidx.health.connect.client.PermissionController
@@ -80,7 +81,14 @@ class HealthConnectModule(reactContext: ReactApplicationContext) : NativeHealthC
     override fun openSettings(promise: Promise) {
         val activity = reactApplicationContext.currentActivity ?: run { promise.resolve(false); return }
         try {
-            activity.startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS))
+            val sdk = HealthConnectClient.getSdkStatus(reactApplicationContext)
+            if (sdk == HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED) {
+                val marketIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.apps.healthdata"))
+                try { activity.startActivity(marketIntent) }
+                catch (_: Throwable) { activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata"))) }
+            } else {
+                activity.startActivity(Intent(HealthConnectClient.ACTION_HEALTH_CONNECT_SETTINGS))
+            }
             promise.resolve(true)
         } catch (_: Throwable) { promise.resolve(false) }
     }

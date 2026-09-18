@@ -17,8 +17,9 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
   const [current, setCurrent] = useState<BodyScanDetails | null>(null);
   const [comparison, setComparison] = useState<BodyScanComparison | null>(null);
   const [previews, setPreviews] = useState<Partial<Record<ViewID, string>>>({});
-  const [busy, setBusy] = useState<ViewID | 'start' | 'complete' | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -48,15 +49,19 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
 
   async function capture(view: ViewID) {
     try {
-      setError('');
+      setError(''); setNotice('');
       setBusy(view);
       const scan = current ?? await ensureScan(false);
       const image = await bodyPhotoCapture.captureImage();
-      setPreviews(prev => ({...prev, [view]: image}));
       const next = await api.putBodyScanPhoto(accessToken, scan.scan.id, view, image);
+      setPreviews(prev => ({...prev, [view]: image}));
       setCurrent(next);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Не удалось сохранить фотографию';
+      if (/BODY_PHOTO_CANCELLED|Съёмка отменена/i.test(message)) {
+        setNotice('Съёмка отменена. Сохранённые фотографии не изменились.');
+        return;
+      }
       setError(message);
       Alert.alert('Body Scan', message);
     } finally { setBusy(null); }
@@ -92,9 +97,30 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
     } finally { setBusy(null); }
   }
 
+  function removeCompleted(item: BodyScanDetails) {
+    const date = new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU');
+    Alert.alert('Удалить контрольную точку?', `Body Scan от ${date} и все три приватных фото будут удалены безвозвратно.`, [
+      {text: 'Отмена', style: 'cancel'},
+      {text: 'Удалить', style: 'destructive', onPress: () => void (async () => {
+        try {
+          setError(''); setBusy(`delete-${item.scan.id}`);
+          await api.deleteBodyScan(accessToken, item.scan.id);
+          await load();
+        } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось удалить Body Scan'); }
+        finally { setBusy(null); }
+      })()},
+    ]);
+  }
+
   const photoByView = useMemo(() => Object.fromEntries((current?.photos ?? []).map(p => [p.view, p])), [current]);
   const ready = views.every(v => Boolean(photoByView[v.id]));
   const completed = items.filter(x => x.scan.status === 'completed');
+  const gradeLabel = comparison?.capture_grade === 'excellent' ? 'Отлично сопоставимы' : comparison?.capture_grade === 'good' ? 'Хорошо сопоставимы' : comparison?.capture_grade === 'retake_recommended' ? 'Лучше переснять' : 'Базовая оценка сопоставимости';
+  const viewTitle = (view: ViewID) => views.find(item => item.id === view)?.title ?? view;
+  const issueLabel = (issue: string) => ({
+    'unusual framing; keep full body centered': 'Необычное соотношение кадра — разместите всё тело по центру',
+    'low contrast': 'Низкий контраст — выберите более однородный фон',
+  }[issue] ?? issue);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -114,7 +140,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
           <AppButton label="Начать Body Scan" testID="body-scan-start" loading={busy === 'start'} disabled={!bodyPhotoCapture.available} onPress={() => void startScan()} />
           {!bodyPhotoCapture.available ? <Text style={styles.warning}>Камера Body Scan недоступна в этой сборке. Обновите приложение или используйте поддерживаемое Android-устройство.</Text> : null}
         </View>
-      ) : (
+      ) : !loading && current ? (
         <>
           <View style={styles.progressRow}>
             <Text style={styles.cardTitle}>Текущий скан</Text>
@@ -133,7 +159,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
                 {saved ? (
                   <View style={styles.quality}>
                     <Text style={styles.qualityText}>{saved.width}×{saved.height} · свет {saved.brightness.toFixed(0)} · контраст {saved.contrast.toFixed(0)}</Text>
-                    {saved.quality_issues?.map(issue => <Text key={issue} style={styles.warning}>• {issue}</Text>)}
+                    {saved.quality_issues?.map(issue => <Text key={issue} style={styles.warning}>• {issueLabel(issue)}</Text>)}
                   </View>
                 ) : null}
                 <AppButton label={saved ? 'Переснять' : `Снять ${item.title.toLowerCase()}`} testID={`body-scan-capture-${item.id}`} loading={busy === item.id} disabled={!bodyPhotoCapture.available || (busy !== null && busy !== item.id)} onPress={() => void capture(item.id)} variant={saved ? 'secondary' : 'primary'} />
@@ -143,28 +169,41 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
           <AppButton label="Удалить черновик" testID="body-scan-delete-draft" variant="danger" disabled={busy !== null} onPress={() => void discard()} />
           <AppButton label="Завершить Body Scan" testID="body-scan-complete" disabled={!ready} loading={busy === 'complete'} onPress={() => void complete()} />
         </>
-      )}
+      ) : null}
 
       {comparison ? (
         <View style={styles.compareCard}>
           <Text style={styles.section}>Сравнимость последних сканов</Text>
           <Text style={styles.score}>{comparison.capture_consistency_score.toFixed(0)}<Text style={styles.scoreUnit}> / 100</Text></Text>
-          <Text style={styles.muted}>{comparison.days_between} дней между контрольными точками · разница освещения {comparison.lighting_delta.toFixed(0)}</Text>
+          <Text style={styles.grade}>{gradeLabel}</Text>
+          <Text style={styles.muted}>{comparison.days_between} дней между контрольными точками</Text>
+          <View style={styles.metricGrid}>
+            <Text style={styles.captureMetric}>Свет Δ {comparison.lighting_delta.toFixed(0)}</Text>
+            {comparison.contrast_delta !== undefined ? <Text style={styles.captureMetric}>Контраст Δ {comparison.contrast_delta.toFixed(0)}</Text> : null}
+            {comparison.resolution_delta_percent !== undefined ? <Text style={styles.captureMetric}>Разрешение Δ {comparison.resolution_delta_percent.toFixed(0)}%</Text> : null}
+          </View>
+          {(comparison.view_metrics ?? []).map(metric => (
+            <View key={metric.view} style={styles.viewMetricRow}>
+              <Text style={styles.viewMetricTitle}>{viewTitle(metric.view)}</Text>
+              <Text style={styles.viewMetricScore}>{metric.consistency_score.toFixed(0)}/100</Text>
+            </View>
+          ))}
           {comparison.weight_delta_kg !== undefined ? <Text style={styles.metric}>Вес: {comparison.weight_delta_kg > 0 ? '+' : ''}{comparison.weight_delta_kg.toFixed(1)} кг</Text> : null}
           {comparison.waist_delta_cm !== undefined ? <Text style={styles.metric}>Талия: {comparison.waist_delta_cm > 0 ? '+' : ''}{comparison.waist_delta_cm.toFixed(1)} см</Text> : null}
           {comparison.warnings?.map(w => <Text key={w} style={styles.warning}>• {w}</Text>)}
-          <Text style={styles.cvPending}>Визуальный анализ пропорций будет подключён в следующем CV-слое; текущий score оценивает качество и сопоставимость съёмки.</Text>
+          <Text style={styles.cvPending}>Оценка отражает только сопоставимость условий съёмки. Она не анализирует фигуру, состав тела, здоровье или медицинские изменения.</Text>
         </View>
       ) : null}
 
       <Text style={styles.section}>История</Text>
       {completed.length === 0 ? <Text style={styles.muted}>Пока нет завершённых сканов.</Text> : completed.map(item => (
         <View key={item.scan.id} style={styles.historyCard}>
-          <View><Text style={styles.cardTitle}>{new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU')}</Text><Text style={styles.muted}>{item.photos.length} ракурса · приватное хранение</Text></View>
-          <Text style={styles.done}>Готов</Text>
+          <View style={styles.historyText}><Text style={styles.cardTitle}>{new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU')}</Text><Text style={styles.muted}>{item.photos.length} ракурса · приватное хранение</Text></View>
+          <Pressable accessibilityRole="button" accessibilityLabel={`Удалить Body Scan от ${new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU')}`} disabled={busy !== null} onPress={() => removeCompleted(item)} hitSlop={8}><Text style={styles.delete}>{busy === `delete-${item.scan.id}` ? '…' : 'Удалить'}</Text></Pressable>
         </View>
       ))}
       {error && items.length > 0 ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {notice ? <Text accessibilityLiveRegion="polite" style={styles.muted}>{notice}</Text> : null}
     </ScrollView>
   );
 }
@@ -195,9 +234,16 @@ const styles = StyleSheet.create({
   section: {fontSize: 19, fontWeight: '900', color: colors.text, marginTop: spacing.sm},
   score: {fontSize: 38, fontWeight: '900', color: colors.text},
   scoreUnit: {fontSize: 15, fontWeight: '800', color: colors.textMuted},
+  grade: {fontSize: 15, fontWeight: '900', color: colors.text},
+  metricGrid: {flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs},
+  captureMetric: {fontSize: 11, fontWeight: '800', color: colors.text, backgroundColor: colors.surfaceMuted, borderRadius: 10, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs},
+  viewMetricRow: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm},
+  viewMetricTitle: {fontSize: 13, fontWeight: '800', color: colors.text},
+  viewMetricScore: {fontSize: 13, fontWeight: '900', color: colors.text},
   metric: {fontSize: 15, fontWeight: '800', color: colors.text},
   cvPending: {fontSize: 11, lineHeight: 17, color: colors.textMuted, marginTop: spacing.xs},
-  historyCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'},
-  done: {fontSize: 11, fontWeight: '900', color: colors.text},
+  historyCard: {borderWidth: 1, borderColor: colors.border, borderRadius: 16, padding: spacing.md, flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between', alignItems: 'center'},
+  historyText: {flex: 1},
+  delete: {fontSize: 11, fontWeight: '900', color: colors.danger, paddingVertical: spacing.sm},
   error: {fontSize: 12, lineHeight: 18, fontWeight: '700', color: colors.danger},
 });

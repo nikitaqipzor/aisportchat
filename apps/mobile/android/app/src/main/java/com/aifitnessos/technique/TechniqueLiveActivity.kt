@@ -75,7 +75,7 @@ class TechniqueLiveActivity : AppCompatActivity() {
     }
 
     private val permissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startCamera() else finishError("Для live-анализа нужен доступ к камере")
+        if (granted) startCamera() else finishError("Для live-анализа нужен доступ к камере", "TECHNIQUE_CAMERA_PERMISSION_DENIED")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -371,11 +371,16 @@ class TechniqueLiveActivity : AppCompatActivity() {
         }
     }
 
-    private fun finishError(message: String) {
+    private fun finishError(message: String, code: String = "TECHNIQUE_LIVE_FAILED") {
         if (!isFinishing) {
-            setResult(Activity.RESULT_CANCELED, Intent().putExtra(EXTRA_ERROR, message))
+            setResult(Activity.RESULT_CANCELED, Intent().putExtra(EXTRA_ERROR, message).putExtra(EXTRA_ERROR_CODE, code))
             finish()
         }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        finishError("Live-анализ отменён", "TECHNIQUE_LIVE_CANCELLED")
     }
 
     private fun ensureModel() {
@@ -399,6 +404,7 @@ class TechniqueLiveActivity : AppCompatActivity() {
         const val EXTRA_MAX_DURATION = "max_duration_seconds"
         const val EXTRA_RESULT_PATH = "result_path"
         const val EXTRA_ERROR = "error"
+        const val EXTRA_ERROR_CODE = "error_code"
         private const val MODEL_ASSET = "pose_landmarker_lite.task"
         private const val INFERENCE_INTERVAL_MS = 110L
         private const val SAMPLE_INTERVAL_MS = 200L

@@ -71,6 +71,19 @@ func TestSupportedExercisesHasInitialFive(t *testing.T) {
 	}
 }
 
+func TestTechniqueExerciseMappingUsesOnlySafeAliases(t *testing.T) {
+	cases := map[string]string{
+		"goblet-squat": "squat", "front_squat": "squat", "reverse-lunge": "lunge",
+		"incline_pushup": "push_up", "hammer_curl": "biceps_curl", "arnold_press": "shoulder_press",
+		"lying_leg_curl": "", "seated_leg_curl": "", "wrist_curl": "", "bench_press": "",
+	}
+	for exerciseID, want := range cases {
+		if got := techniqueKeyForExerciseID(exerciseID); got != want {
+			t.Errorf("techniqueKeyForExerciseID(%q)=%q, want %q", exerciseID, got, want)
+		}
+	}
+}
+
 func elbowFrame(ts int64, degrees float64) Frame {
 	l := make([]Landmark, 33)
 	for i := range l {

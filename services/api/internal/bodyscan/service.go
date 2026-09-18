@@ -95,7 +95,12 @@ func (s *Service) Delete(ctx context.Context, userID, scanID string) error {
 		return err
 	}
 	for _, photo := range details.Photos {
-		_ = s.media.Delete(ctx, photo.StorageKey)
+		if err := s.media.Delete(ctx, photo.StorageKey); err != nil && !errors.Is(err, media.ErrNotFound) {
+			// Keep the metadata when blob deletion fails so the owner can retry.
+			// Removing the database row here would orphan private media and make
+			// a later user-initiated deletion impossible.
+			return fmt.Errorf("delete body scan photo %s: %w", photo.View, err)
+		}
 	}
 	return s.store.DeleteBodyScan(ctx, userID, scanID)
 }
@@ -218,15 +223,30 @@ func newID() string {
 }
 
 type Comparison struct {
-	FromScanID     string   `json:"from_scan_id"`
-	ToScanID       string   `json:"to_scan_id"`
-	DaysBetween    int      `json:"days_between"`
-	CaptureScore   float64  `json:"capture_consistency_score"`
-	LightingDelta  float64  `json:"lighting_delta"`
-	Warnings       []string `json:"warnings,omitempty"`
-	WeightDeltaKG  *float64 `json:"weight_delta_kg,omitempty"`
-	WaistDeltaCM   *float64 `json:"waist_delta_cm,omitempty"`
-	VisualCVStatus string   `json:"visual_cv_status"`
+	FromScanID              string           `json:"from_scan_id"`
+	ToScanID                string           `json:"to_scan_id"`
+	DaysBetween             int              `json:"days_between"`
+	CaptureScore            float64          `json:"capture_consistency_score"`
+	CaptureGrade            string           `json:"capture_grade"`
+	LightingDelta           float64          `json:"lighting_delta"`
+	ContrastDelta           float64          `json:"contrast_delta"`
+	ResolutionDeltaPercent  float64          `json:"resolution_delta_percent"`
+	ViewMetrics             []ViewComparison `json:"view_metrics"`
+	Warnings                []string         `json:"warnings,omitempty"`
+	WeightDeltaKG           *float64         `json:"weight_delta_kg,omitempty"`
+	WaistDeltaCM            *float64         `json:"waist_delta_cm,omitempty"`
+	VisualCVStatus          string           `json:"visual_cv_status"`
+}
+
+// ViewComparison only evaluates whether two captures were taken in comparable
+// technical conditions. It deliberately makes no inference about body shape,
+// composition, health or medical change.
+type ViewComparison struct {
+	View                   string  `json:"view"`
+	ConsistencyScore       float64 `json:"consistency_score"`
+	BrightnessDelta        float64 `json:"brightness_delta"`
+	ContrastDelta          float64 `json:"contrast_delta"`
+	ResolutionDeltaPercent float64 `json:"resolution_delta_percent"`
 }
 
 func (s *Service) LatestComparison(ctx context.Context, userID string) (Comparison, error) {
@@ -255,15 +275,20 @@ func (s *Service) LatestComparison(ctx context.Context, userID string) (Comparis
 	if from.Scan.CompletedAt != nil {
 		fromAt = *from.Scan.CompletedAt
 	}
-	lightingDelta := math.Abs(avgBrightness(to.Photos) - avgBrightness(from.Photos))
-	dimensionPenalty := avgDimensionDelta(from.Photos, to.Photos)
-	score := 100 - math.Min(45, lightingDelta*0.7) - math.Min(35, dimensionPenalty*100)
+	viewMetrics := compareViews(from.Photos, to.Photos)
+	if len(viewMetrics) != 3 {
+		return Comparison{}, store.ErrInvalidState
+	}
+	lightingDelta, contrastDelta, resolutionDelta, score := averageViewMetrics(viewMetrics)
 	warnings := []string{}
 	if lightingDelta > 25 {
 		warnings = append(warnings, "Освещение заметно отличается — визуальное сравнение будет менее точным.")
 	}
-	if dimensionPenalty > 0.18 {
-		warnings = append(warnings, "Кадрирование отличается — старайтесь держать одинаковое расстояние до камеры.")
+	if contrastDelta > 20 {
+		warnings = append(warnings, "Контраст заметно отличается — используйте одинаковый фон и источник света.")
+	}
+	if resolutionDelta > 18 {
+		warnings = append(warnings, "Разрешение кадров отличается — используйте одну камеру и одинаковые настройки.")
 	}
 	for _, p := range append(append([]store.BodyScanPhoto{}, from.Photos...), to.Photos...) {
 		if p.QualityStatus == "warning" {
@@ -275,7 +300,18 @@ func (s *Service) LatestComparison(ctx context.Context, userID string) (Comparis
 		score = 0
 	}
 	score = math.Round(score*10) / 10
-	cmp := Comparison{FromScanID: from.Scan.ID, ToScanID: to.Scan.ID, DaysBetween: int(toAt.Sub(fromAt).Hours() / 24), CaptureScore: score, LightingDelta: math.Round(lightingDelta*10) / 10, Warnings: warnings, VisualCVStatus: "pending_pose_engine"}
+	grade := "retake_recommended"
+	if score >= 85 {
+		grade = "excellent"
+	} else if score >= 70 {
+		grade = "good"
+	}
+	cmp := Comparison{
+		FromScanID: from.Scan.ID, ToScanID: to.Scan.ID, DaysBetween: int(toAt.Sub(fromAt).Hours() / 24),
+		CaptureScore: score, CaptureGrade: grade, LightingDelta: lightingDelta, ContrastDelta: contrastDelta,
+		ResolutionDeltaPercent: resolutionDelta, ViewMetrics: viewMetrics, Warnings: warnings,
+		VisualCVStatus: "capture_only_no_body_inference",
+	}
 	measurements, _ := s.store.ListBodyMeasurements(ctx, userID, fromAt.Add(-72*time.Hour), toAt.Add(72*time.Hour))
 	if a, b := nearestMeasurement(measurements, fromAt), nearestMeasurement(measurements, toAt); a != nil && b != nil {
 		if a.WeightKG != nil && b.WeightKG != nil {
@@ -290,38 +326,52 @@ func (s *Service) LatestComparison(ctx context.Context, userID string) (Comparis
 	return cmp, nil
 }
 
-func avgBrightness(photos []store.BodyScanPhoto) float64 {
-	if len(photos) == 0 {
-		return 0
-	}
-	var x float64
-	for _, p := range photos {
-		x += p.Brightness
-	}
-	return x / float64(len(photos))
-}
-func avgDimensionDelta(a, b []store.BodyScanPhoto) float64 {
-	ma := map[string]store.BodyScanPhoto{}
+func compareViews(a, b []store.BodyScanPhoto) []ViewComparison {
+	ma, mb := map[string]store.BodyScanPhoto{}, map[string]store.BodyScanPhoto{}
 	for _, p := range a {
 		ma[p.View] = p
 	}
-	var total float64
-	n := 0
 	for _, p := range b {
-		q, ok := ma[p.View]
-		if !ok || q.Width == 0 || q.Height == 0 {
+		mb[p.View] = p
+	}
+	out := make([]ViewComparison, 0, 3)
+	for _, view := range []string{"front", "side", "back"} {
+		from, okA := ma[view]
+		to, okB := mb[view]
+		if !okA || !okB || from.Width <= 0 || from.Height <= 0 {
 			continue
 		}
-		dw := math.Abs(float64(p.Width-q.Width)) / float64(q.Width)
-		dh := math.Abs(float64(p.Height-q.Height)) / float64(q.Height)
-		total += (dw + dh) / 2
-		n++
+		light := math.Abs(to.Brightness - from.Brightness)
+		contrast := math.Abs(to.Contrast - from.Contrast)
+		resolution := ((math.Abs(float64(to.Width-from.Width))/float64(from.Width) + math.Abs(float64(to.Height-from.Height))/float64(from.Height)) / 2) * 100
+		score := 100 - math.Min(45, light*0.7) - math.Min(20, contrast*0.5) - math.Min(35, resolution)
+		if score < 0 {
+			score = 0
+		}
+		out = append(out, ViewComparison{View: view, ConsistencyScore: round1(score), BrightnessDelta: round1(light), ContrastDelta: round1(contrast), ResolutionDeltaPercent: round1(resolution)})
 	}
-	if n == 0 {
-		return 1
-	}
-	return total / float64(n)
+	return out
 }
+
+func averageViewMetrics(items []ViewComparison) (float64, float64, float64, float64) {
+	if len(items) == 0 {
+		return 0, 0, 0, 0
+	}
+	var light, contrast, resolution, score float64
+	for _, item := range items {
+		light += item.BrightnessDelta
+		contrast += item.ContrastDelta
+		resolution += item.ResolutionDeltaPercent
+		score += item.ConsistencyScore
+	}
+	n := float64(len(items))
+	return round1(light/n), round1(contrast/n), round1(resolution/n), round1(score/n)
+}
+
+func round1(v float64) float64 {
+	return math.Round(v*10) / 10
+}
+
 func nearestMeasurement(items []store.BodyMeasurement, target time.Time) *store.BodyMeasurement {
 	var best *store.BodyMeasurement
 	bestDist := time.Duration(1<<63 - 1)
