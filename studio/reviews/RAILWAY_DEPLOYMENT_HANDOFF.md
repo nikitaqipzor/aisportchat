@@ -13,6 +13,8 @@ Make the Go API deployable to Railway for a connected Android staging test.
 - Railway setup, PostgreSQL, media volume, healthcheck, and connected APK steps
   are documented in `docs/RAILWAY_DEPLOYMENT.md`.
 - CI validates the Railway deployment contract.
+- CI builds the exact Railway Docker image and exercises the migration runner
+  against PostgreSQL through `DATABASE_URL`.
 
 ## Risks
 
@@ -29,7 +31,7 @@ Make the Go API deployable to Railway for a connected Android staging test.
 - Migration contract: 19 up/down pairs.
 - Android native verifier: 125 checks pass.
 - Mobile syntax: 64 files, zero errors.
-- Full Go tests and Docker build require CI because this environment has neither
+- Full Go tests and Docker build run in CI because this environment has neither
   Go nor Docker installed.
 
 ## Unresolved items
