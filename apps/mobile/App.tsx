@@ -433,7 +433,7 @@ export default function App() {
       {/* Keep the analytics tree mounted behind its tools. Legacy navigation contract: onDevices={() => setStep('devices')} */}
       {(step === 'progress' || step === 'devices' || step === 'bodyScan' || (step === 'technique' && !techniqueContext)) && <View style={step === 'progress' ? styles.content : styles.hidden}><ProgressScreen accessToken={access} onBack={() => setStep('home')} onBodyScan={() => setStep('bodyScan')} onTechnique={() => {setTechniqueContext(null);setStep('technique')}} onDevices={() => {setDevicesOrigin('progress');setStep('devices')}} /></View>}
       {step === 'recovery' && <RecoveryScreen accessToken={access} onBack={() => setStep('home')} />}
-      {step === 'devices' && <ConnectedDevicesScreen accessToken={access} onBack={() => setStep(devicesOrigin)} />}
+      {step === 'devices' && <ConnectedDevicesScreen accessToken={access} origin={devicesOrigin} onBack={() => setStep(devicesOrigin)} />}
       {step === 'bodyScan' && <BodyScanScreen accessToken={access} onBack={() => setStep('progress')} />}
       {step === 'technique' && <TechniqueScreen accessToken={access} workoutContext={techniqueContext} onBack={() => {setStep(techniqueContext ? 'active' : 'progress'); setTechniqueContext(null);}} onUseLinkedResult={(result: TechniqueResult) => {if (!techniqueContext) return; setTechniquePrefill({workoutExerciseId: techniqueContext.workoutExerciseId, setNumber: techniqueContext.setNumber, repCount: result.rep_count, analysisId: result.id}); setTechniqueContext(null); setStep('active');}} />}
       {step === 'aiFood' && <AIFoodInputScreen accessToken={access} onBack={() => setStep('nutrition')} onPhoto={() => setStep('foodPhoto')} onDone={() => setStep('nutrition')} />}

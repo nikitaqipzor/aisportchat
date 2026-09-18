@@ -2,6 +2,7 @@ package aifitness
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,11 +53,47 @@ func (s *Service) ParseFoodText(ctx context.Context, userID, text string) (FoodD
 	return s.resolveFoodDraft(ctx, userID, "text", text, items)
 }
 func (s *Service) ParseFoodImage(ctx context.Context, userID, imageDataURL string) (FoodDraft, error) {
+	imageDataURL = strings.TrimSpace(imageDataURL)
+	if err := validateFoodImageDataURL(imageDataURL); err != nil {
+		return FoodDraft{}, err
+	}
 	items, err := s.provider.ExtractFoodImage(ctx, imageDataURL)
 	if err != nil {
 		return FoodDraft{}, err
 	}
 	return s.resolveFoodDraft(ctx, userID, "image", "", items)
+}
+
+func validateFoodImageDataURL(value string) error {
+	const maxDecodedBytes = 5 * 1024 * 1024
+	comma := strings.IndexByte(value, ',')
+	if comma < 0 {
+		return errors.New("photo must be a base64 image data URL")
+	}
+	header, payload := value[:comma], value[comma+1:]
+	switch header {
+	case "data:image/jpeg;base64", "data:image/png;base64", "data:image/webp;base64":
+	default:
+		return errors.New("photo format must be JPEG, PNG, or WebP")
+	}
+	if payload == "" {
+		return errors.New("photo is empty")
+	}
+	// Reject oversize input before decoding to keep provider calls and memory bounded.
+	if base64.StdEncoding.DecodedLen(len(payload)) > maxDecodedBytes {
+		return errors.New("photo exceeds 5 MB limit")
+	}
+	decoded, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return errors.New("photo contains invalid base64 data")
+	}
+	if len(decoded) == 0 {
+		return errors.New("photo is empty")
+	}
+	if len(decoded) > maxDecodedBytes {
+		return errors.New("photo exceeds 5 MB limit")
+	}
+	return nil
 }
 func (s *Service) resolveFoodDraft(ctx context.Context, userID, source, text string, items []ExtractedFood) (FoodDraft, error) {
 	if len(items) > 20 {

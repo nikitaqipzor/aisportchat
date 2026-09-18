@@ -1984,7 +1984,11 @@ components:
       - to_scan_id
       - days_between
       - capture_consistency_score
+      - capture_grade
       - lighting_delta
+      - contrast_delta
+      - resolution_delta_percent
+      - view_metrics
       - visual_cv_status
       properties:
         from_scan_id:
@@ -1999,8 +2003,25 @@ components:
           type: number
           minimum: 0
           maximum: 100
+          description: Deterministic comparability of capture conditions, not a body or health score.
+        capture_grade:
+          type: string
+          enum:
+          - excellent
+          - good
+          - retake_recommended
         lighting_delta:
           type: number
+        contrast_delta:
+          type: number
+        resolution_delta_percent:
+          type: number
+        view_metrics:
+          type: array
+          minItems: 3
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/BodyScanViewComparison'
         warnings:
           type: array
           items:
@@ -2011,7 +2032,33 @@ components:
           type: number
         visual_cv_status:
           type: string
-          example: pending_pose_engine
+          enum:
+          - capture_only_no_body_inference
+    BodyScanViewComparison:
+      type: object
+      required:
+      - view
+      - consistency_score
+      - brightness_delta
+      - contrast_delta
+      - resolution_delta_percent
+      properties:
+        view:
+          type: string
+          enum:
+          - front
+          - side
+          - back
+        consistency_score:
+          type: number
+          minimum: 0
+          maximum: 100
+        brightness_delta:
+          type: number
+        contrast_delta:
+          type: number
+        resolution_delta_percent:
+          type: number
     GenerateProgramRequest:
       type: object
       required:

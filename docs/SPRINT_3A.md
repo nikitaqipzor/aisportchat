@@ -46,6 +46,17 @@ Development runtime uses `MEDIA_ROOT` (default `./data/media`) with restrictive 
 - `POST /api/v1/body-scans/{scan_id}/complete`
 - `GET /api/v1/body-scans/comparison/latest`
 
+### Deterministic comparison contract
+
+The latest comparison reports capture-condition consistency for the front,
+side, and back views. The score is derived only from brightness, contrast, and
+image resolution deltas. It does not estimate body fat, body composition,
+posture, proportions, health, or medical change. Weight and waist deltas are
+shown only when the user separately logged measurements near both scan dates.
+
+No migration is required for this comparison: it is calculated from the
+existing private photo metadata stored by migration `000013_body_scan`.
+
 ## Tests
 - complete scan lifecycle;
 - incomplete scan rejection;

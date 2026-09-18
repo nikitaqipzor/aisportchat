@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -14,6 +15,18 @@ import (
 	"github.com/example/ai-fitness-os/services/api/internal/media"
 	"github.com/example/ai-fitness-os/services/api/internal/store"
 )
+
+type deleteFailingMedia struct {
+	media.Store
+	failKey string
+}
+
+func (m *deleteFailingMedia) Delete(ctx context.Context, key string) error {
+	if key == m.failKey {
+		return errors.New("injected blob delete failure")
+	}
+	return m.Store.Delete(ctx, key)
+}
 
 func testImage(t *testing.T, dark bool) string {
 	t.Helper()
@@ -107,6 +120,38 @@ func TestBodyScanFlowAndPrivacy(t *testing.T) {
 	}
 }
 
+func TestDeleteKeepsMetadataWhenPrivateBlobDeletionFails(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "delete-retry@example.com")
+	svc := NewService(st, blobs)
+	scan, err := svc.Create(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, view := range []string{"front", "side", "back"} {
+		scan, err = svc.AddPhoto(ctx, user, scan.Scan.ID, view, testImage(t, false))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	failing := &deleteFailingMedia{Store: blobs, failKey: scan.Photos[1].StorageKey}
+	if err := NewService(st, failing).Delete(ctx, user, scan.Scan.ID); err == nil {
+		t.Fatal("expected private blob deletion failure")
+	}
+	if _, err := svc.Get(ctx, user, scan.Scan.ID); err != nil {
+		t.Fatalf("metadata must remain available for retry: %v", err)
+	}
+	failing.failKey = ""
+	if err := NewService(st, failing).Delete(ctx, user, scan.Scan.ID); err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if _, err := svc.Get(ctx, user, scan.Scan.ID); err != store.ErrNotFound {
+		t.Fatalf("metadata still accessible after retry: %v", err)
+	}
+}
+
 func TestBodyScanRejectsDarkImage(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemory()
@@ -153,7 +198,41 @@ func TestLatestComparisonUsesCaptureAndMeasurements(t *testing.T) {
 	if cmp.DaysBetween < 29 || cmp.CaptureScore < 90 {
 		t.Fatalf("cmp=%+v", cmp)
 	}
+	if cmp.CaptureGrade != "excellent" || cmp.VisualCVStatus != "capture_only_no_body_inference" {
+		t.Fatalf("unexpected deterministic classification: %+v", cmp)
+	}
+	if len(cmp.ViewMetrics) != 3 {
+		t.Fatalf("view metrics=%+v", cmp.ViewMetrics)
+	}
+	for _, metric := range cmp.ViewMetrics {
+		if metric.ConsistencyScore != 100 || metric.BrightnessDelta != 0 || metric.ContrastDelta != 0 || metric.ResolutionDeltaPercent != 0 {
+			t.Fatalf("identical capture metric=%+v", metric)
+		}
+	}
 	if cmp.WeightDeltaKG == nil || *cmp.WeightDeltaKG != -1.5 {
 		t.Fatalf("weight delta=%v", cmp.WeightDeltaKG)
+	}
+}
+
+func TestCompareViewsReportsTechnicalDifferencesOnly(t *testing.T) {
+	from := []store.BodyScanPhoto{
+		{View: "front", Width: 1000, Height: 1500, Brightness: 100, Contrast: 40},
+		{View: "side", Width: 1000, Height: 1500, Brightness: 100, Contrast: 40},
+		{View: "back", Width: 1000, Height: 1500, Brightness: 100, Contrast: 40},
+	}
+	to := []store.BodyScanPhoto{
+		{View: "front", Width: 800, Height: 1200, Brightness: 130, Contrast: 60},
+		{View: "side", Width: 1000, Height: 1500, Brightness: 100, Contrast: 40},
+		{View: "back", Width: 1000, Height: 1500, Brightness: 100, Contrast: 40},
+	}
+	metrics := compareViews(from, to)
+	if len(metrics) != 3 {
+		t.Fatalf("metrics=%+v", metrics)
+	}
+	if metrics[0].BrightnessDelta != 30 || metrics[0].ContrastDelta != 20 || metrics[0].ResolutionDeltaPercent != 20 {
+		t.Fatalf("front=%+v", metrics[0])
+	}
+	if metrics[0].ConsistencyScore >= metrics[1].ConsistencyScore {
+		t.Fatalf("changed capture must score below unchanged: %+v", metrics)
 	}
 }

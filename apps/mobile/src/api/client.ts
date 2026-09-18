@@ -328,11 +328,21 @@ export type BodyScanComparison = {
   to_scan_id: string;
   days_between: number;
   capture_consistency_score: number;
+  capture_grade?: 'excellent' | 'good' | 'retake_recommended';
   lighting_delta: number;
+  contrast_delta?: number;
+  resolution_delta_percent?: number;
+  view_metrics?: Array<{
+    view: 'front' | 'side' | 'back';
+    consistency_score: number;
+    brightness_delta: number;
+    contrast_delta: number;
+    resolution_delta_percent: number;
+  }>;
   warnings?: string[];
   weight_delta_kg?: number;
   waist_delta_cm?: number;
-  visual_cv_status: string;
+  visual_cv_status: 'capture_only_no_body_inference' | 'pending_pose_engine';
 };
 
 export type ProgressSummary = {

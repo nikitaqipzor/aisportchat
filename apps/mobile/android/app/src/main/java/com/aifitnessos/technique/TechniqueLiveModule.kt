@@ -18,7 +18,8 @@ class TechniqueLiveModule(reactContext: ReactApplicationContext) : NativeTechniq
             val promise = pendingPromise ?: return
             pendingPromise = null
             if (resultCode != Activity.RESULT_OK) {
-                promise.reject("TECHNIQUE_LIVE_CANCELLED", data?.getStringExtra(TechniqueLiveActivity.EXTRA_ERROR) ?: "Live-анализ отменён")
+                val code = data?.getStringExtra(TechniqueLiveActivity.EXTRA_ERROR_CODE) ?: "TECHNIQUE_LIVE_CANCELLED"
+                promise.reject(code, data?.getStringExtra(TechniqueLiveActivity.EXTRA_ERROR) ?: "Live-анализ отменён")
                 return
             }
             val path = data?.getStringExtra(TechniqueLiveActivity.EXTRA_RESULT_PATH)

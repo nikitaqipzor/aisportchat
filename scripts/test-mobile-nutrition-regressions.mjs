@@ -49,6 +49,20 @@ const input = fs.readFileSync('apps/mobile/src/screens/AIFoodInputScreen.tsx', '
 assert.match(input, /parseVersion\.current\+=1;setBusy\(false\);setText\(value\);setDraft\(null\)/);
 assert.match(input, /version===parseVersion\.current/);
 
+const photo = fs.readFileSync('apps/mobile/src/screens/FoodPhotoScreen.tsx', 'utf8');
+assert.match(photo, /isFoodPhotoPickCancelled/);
+assert.match(photo, /Повторить анализ/);
+assert.match(photo, /source=\{\{uri:selectedImage\}\}/);
+assert.match(photo, /onManualEntry=\{onBack\}/);
+
+const draftView = fs.readFileSync('apps/mobile/src/components/AIFoodDraftView.tsx', 'utf8');
+assert.match(draftView, /accessibilityRole="checkbox"/);
+assert.match(draftView, /included\[x\.i\]/);
+
+const picker = fs.readFileSync('apps/mobile/android/app/src/main/java/com/aifitnessos/foodphoto/FoodPhotoPickerModule.kt', 'utf8');
+assert.match(picker, /PHOTO_PICK_TOO_LARGE/);
+assert.match(picker, /PHOTO_PICK_UNSUPPORTED/);
+
 const diary = fs.readFileSync('apps/mobile/src/screens/NutritionScreen.tsx', 'utf8');
 assert.match(diary, /setSelectedDate\(next\.selectedDate\)/);
 assert.match(diary, /setDay\(next\.day\)/);
