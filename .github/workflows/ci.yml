@@ -10,7 +10,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Validate staging Compose and TLS proxy contract
-        run: ./scripts/verify-staging-deploy.sh
+        run: |
+          ./scripts/verify-staging-deploy.sh
+          ./scripts/verify-railway-deploy.sh
 
   backend:
     runs-on: ubuntu-latest

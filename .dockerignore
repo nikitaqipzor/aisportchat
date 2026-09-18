@@ -1,0 +1,67 @@
+.git
+.github
+.env
+.env.*
+apps
+docs
+infra
+packages
+release-evidence
+scripts
+studio
+**/node_modules
+**/build
+**/.gradle
+**/*.apk
+**/*.aab
+*** Add File: /workspace/scratch/6f924165f785/aisportchat-audit/studio/reviews/RAILWAY_DEPLOYMENT_HANDOFF.md
+# Railway deployment handoff
+
+## Goal
+
+Make the Go API deployable to Railway for a connected Android staging test.
+
+## Changes
+
+- API now prefers Railway's injected `PORT` and retains `API_PORT` locally.
+- Production image includes PostgreSQL client and all migrations.
+- Migration runner supports Railway `DATABASE_URL` and remains compatible with
+  the existing Compose `PGHOST`/`PGPORT` variables.
+- Docker build context excludes the 319 MB Android workspace and unrelated
+  repository content.
+- Railway setup, secrets, PostgreSQL, media volume, healthcheck, and connected
+  APK steps are documented in `docs/RAILWAY_DEPLOYMENT.md`.
+- CI validates the Railway deployment contract.
+
+## Risks
+
+- Railway service, PostgreSQL, domain, secrets, and volume still require an
+  authenticated project deployment.
+- A service with an attached volume has a short redeploy interruption on
+  Railway and must remain single-replica while media is stored locally.
+- `OPENAI_API_KEY` is optional; without it AI endpoints use the deterministic
+  local provider.
+
+## Tests and evidence
+
+- `scripts/verify-railway-deploy.sh` passes.
+- Migration shell syntax passes `sh -n`.
+- `git diff --check` passes.
+- API contract: 82 OpenAPI operations / 83 routes plus `/healthz`.
+- Migration contract: 19 up/down pairs.
+- Android native verifier: 125 checks pass.
+- Mobile syntax: 64 files, zero errors.
+- Full Go tests and Docker build require CI because this execution environment
+  has neither Go nor Docker installed.
+
+## Unresolved items
+
+- Deploy and probe the real Railway domain.
+- Run the connected APK workflow with the deployed `/api/v1` URL.
+- Complete real-device account, media, body scan, nutrition, and sync smoke tests.
+
+## Handoff
+
+Lead/DevOps: deploy from `main`, verify GitHub CI and Railway `/healthz`, then
+build `athletica-ai-connected-preview-apk`. QA: install that connected artifact;
+do not test network flows with the generic `preview.invalid` APK.
