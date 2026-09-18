@@ -24,7 +24,7 @@ jobs:
         run: |
           set -euo pipefail
           test -d .recovery/chunks
-          test "$(find .recovery/chunks -type f -name 'chunk-*' | wc -l)" -eq 36
+          test "$(find .recovery/chunks -type f -name 'chunk-*' | wc -l)" -eq 54
           cat $(find .recovery/chunks -type f -name 'chunk-*' | sort) | base64 -d > /tmp/r2-recovery.tar.gz
           echo '06e12e34cb25dbb314d4c4b4ab88829c6320dd08037fd2af1b686997f71fb958  /tmp/r2-recovery.tar.gz' | sha256sum -c -
 
