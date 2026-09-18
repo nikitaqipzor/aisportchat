@@ -5,9 +5,7 @@ on:
     branches:
       - recovery/sprint-4c-r2
     paths:
-      - '.recovery/r2-recovery.tar.gz'
-      - '.github/workflows/recover-r2.yml'
-  workflow_dispatch:
+      - '.recovery/READY'
 
 permissions:
   contents: write
@@ -20,21 +18,29 @@ jobs:
         with:
           ref: recovery/sprint-4c-r2
           fetch-depth: 0
-      - name: Verify recovery artifact
+
+      - name: Reassemble Sprint 4C R2 archive
         shell: bash
         run: |
           set -euo pipefail
-          echo '5422055cc683f28a2d153c6762efbdc20c9976dbf8612482b7abde9438676224  .recovery/r2-recovery.tar.gz' | sha256sum -c -
+          test -d .recovery/chunks
+          test "$(find .recovery/chunks -type f -name 'chunk-*' | wc -l)" -eq 36
+          cat $(find .recovery/chunks -type f -name 'chunk-*' | sort) | base64 -d > /tmp/r2-recovery.tar.gz
+          echo '06e12e34cb25dbb314d4c4b4ab88829c6320dd08037fd2af1b686997f71fb958  /tmp/r2-recovery.tar.gz' | sha256sum -c -
+
       - name: Restore Sprint 4C R2 tree
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf /tmp/r2-restore
           mkdir -p /tmp/r2-restore
-          tar -xzf .recovery/r2-recovery.tar.gz -C /tmp/r2-restore
+          tar -xzf /tmp/r2-recovery.tar.gz -C /tmp/r2-restore
+
           find . -mindepth 1 -maxdepth 1 ! -name .git ! -name .recovery -exec rm -rf {} +
           cp -a /tmp/r2-restore/. .
           rm -rf .recovery
           rm -f .github/workflows/recover-r2.yml
+
           cat > .gitignore <<'EOF'
           # Dependencies/build output
           node_modules/
@@ -61,6 +67,20 @@ jobs:
           .vscode/
           *.swp
           EOF
+
+      - name: Sanity-check restored project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d apps/mobile
+          test -d services/api
+          test -d packages
+          test -d infra
+          test -d docs
+          test -f .github/workflows/ci.yml
+          test -f apps/mobile/android/gradle/wrapper/gradle-wrapper.jar
+          echo "Restored file count: $(find . -type f ! -path './.git/*' | wc -l)"
+
       - name: Commit restored source
         shell: bash
         run: |
