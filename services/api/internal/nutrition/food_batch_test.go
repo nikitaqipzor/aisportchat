@@ -28,7 +28,7 @@ func TestBatchFoodAllOrNothingAndRetries(t *testing.T) {
 	if _,err:=svc.LogFoodBatch(ctx,userID,"snack",items,&when,key,"ai_confirm","");!errors.Is(err,store.ErrIdempotencyConflict){t.Fatalf("changed meal should conflict: %v",err)}
 	second,err:=svc.LogFoodBatch(ctx,userID,"breakfast",items,&when,"food-test-batch-02","ai_confirm","")
 	if err!=nil || len(second.Entries)!=4 {t.Fatalf("new action must log again entries=%d err=%v",len(second.Entries),err)}
-	if _,err:=svc.LogFoodBatch(ctx,userID,"breakfast",items,&when,"too-short","recipe:other","");err==nil {t.Fatal("expected invalid key rejection")}
+	if _,err:=svc.LogFoodBatch(ctx,userID,"breakfast",items,&when,"short","recipe:other","");err==nil {t.Fatal("expected invalid key rejection")}
 }
 
 func TestRecipeLoggingIsAtomicAndKeyed(t *testing.T) {

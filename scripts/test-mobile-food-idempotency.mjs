@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import ts from '../apps/mobile/node_modules/typescript/lib/typescript.js';
+import {loadTypeScript} from './load-typescript.mjs';
+
+const typescript = await loadTypeScript();
+const ts = typescript.default ?? typescript;
 
 const memory = new Map();
 let owner = 'owner-a';
