@@ -14,12 +14,18 @@ const recordLabels: Record<string, string> = {
 export function WorkoutDetailScreen({
   accessToken,
   workoutId,
+  backLabel = 'История',
   onBack,
+  onOpenPlanned,
+  onResume,
   onRepeat,
 }: {
   accessToken: string;
   workoutId: string;
+  backLabel?: string;
   onBack: () => void;
+  onOpenPlanned: (workout: WorkoutView) => void;
+  onResume: (workout: WorkoutView) => void;
   onRepeat: (workout: WorkoutView) => void;
 }) {
   const [workout, setWorkout] = useState<WorkoutView | null>(null);
@@ -37,7 +43,7 @@ export function WorkoutDetailScreen({
   useEffect(() => { void load(); }, [accessToken, workoutId]);
 
   if (loading) return <View accessibilityRole="progressbar" accessibilityLabel="Загрузка тренировки" style={styles.loading}><ActivityIndicator color={colors.primary} /><Text style={styles.muted}>Загружаем тренировку…</Text></View>;
-  if (!workout) return <View style={styles.loading}><Text accessibilityRole="header" style={styles.stateTitle}>Тренировка недоступна</Text><Text accessibilityRole="alert" style={styles.muted}>{error || 'Тренировка не найдена.'}</Text><AppButton label="Повторить" variant="secondary" testID="workout-detail-retry" onPress={() => void load()} /><AppButton label="К истории" variant="text" onPress={onBack} /></View>;
+  if (!workout) return <View style={styles.loading}><Text accessibilityRole="header" style={styles.stateTitle}>Тренировка недоступна</Text><Text accessibilityRole="alert" style={styles.muted}>{error || 'Тренировка не найдена.'}</Text><AppButton label="Повторить" variant="secondary" testID="workout-detail-retry" onPress={() => void load()} /><AppButton label={`К разделу «${backLabel}»`} variant="text" onPress={onBack} /></View>;
 
   const muscle = workout.workout.muscle as MuscleId;
 
@@ -68,20 +74,20 @@ export function WorkoutDetailScreen({
   return (
     <ScrollView testID="workout-detail-screen" contentContainerStyle={styles.container}>
       <View style={styles.topline}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Вернуться к истории" onPress={onBack} style={styles.topAction}><Text style={styles.back}>← История</Text></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Вернуться: ${backLabel}`} onPress={onBack} style={styles.topAction}><Text style={styles.back}>← {backLabel}</Text></Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel={workout.workout.favorite?'Убрать тренировку из избранного':'Добавить тренировку в избранное'} accessibilityState={{disabled:working,busy:working}} onPress={toggleFavorite} disabled={working} style={[styles.favorite,working&&styles.disabled]}>
           <Text style={styles.favoriteText}>{workout.workout.favorite ? '★ В избранном' : '☆ В избранное'}</Text>
         </Pressable>
       </View>
       <Text style={styles.eyebrow}>ТРЕНИРОВКА</Text>
       <Text accessibilityRole="header" style={styles.title}>{muscleMeta[muscle]?.title ?? workout.workout.muscle}</Text>
-      <Text style={styles.meta}>{new Date(workout.workout.completed_at ?? workout.workout.created_at).toLocaleString('ru-RU')} · {environmentLabel(workout.workout.environment)}</Text>
+      <Text style={styles.meta}>{workout.workout.status === 'completed' ? 'Завершена' : workout.workout.status === 'active' ? 'В процессе' : workout.workout.status === 'planned' ? 'Запланирована' : 'Отменена'} · {new Date(workout.workout.completed_at ?? workout.workout.created_at).toLocaleString('ru-RU')} · {environmentLabel(workout.workout.environment)}</Text>
 
-      <View style={styles.metrics}>
+      {workout.workout.status === 'completed' ? <View style={styles.metrics}>
         <Metric label="Объём" value={`${Math.round(workout.workout.total_volume)} кг`} />
         <Metric label="Упражнений" value={String(workout.exercises.length)} />
         <Metric label="PR" value={String(workout.personal_records.length)} />
-      </View>
+      </View> : null}
 
       {workout.personal_records.length > 0 ? (
         <View style={styles.prCard}>
@@ -105,6 +111,8 @@ export function WorkoutDetailScreen({
 
       {workout.exercises.length===0?<View style={styles.empty}><Text style={styles.stateTitle}>Нет записанных упражнений</Text><Text style={styles.muted}>В этой тренировке не сохранилось ни одного упражнения.</Text></View>:null}
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+      {workout.workout.status === 'planned' ? <AppButton label="Открыть план и начать" testID="workout-detail-start-planned" onPress={() => onOpenPlanned(workout)} /> : null}
+      {workout.workout.status === 'active' ? <AppButton label="Продолжить тренировку" testID="workout-detail-resume" onPress={() => onResume(workout)} /> : null}
       {workout.workout.status === 'completed' ? (
         <AppButton label="Повторить с прогрессией" testID="workout-detail-repeat" loading={working} onPress={() => void repeat()} />
       ) : null}

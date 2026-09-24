@@ -42,6 +42,7 @@ import {healthConnect} from './src/native/healthConnect';
 
 type Step = 'auth' | 'goal' | 'profile' | 'training' | 'profileSettings' | 'home' | 'muscle' | 'manualWorkout' | 'preview' | 'active' | 'summary' | 'history' | 'workoutDetail' | 'nutrition' | 'nutritionSetup' | 'foodSearch' | 'customFood' | 'recipes' | 'progress' | 'aiFood' | 'foodPhoto' | 'aiCoach' | 'weeklyAI' | 'programs' | 'programSetup' | 'programDetail' | 'bodyScan' | 'technique' | 'recovery' | 'devices';
 type Environment = 'home' | 'gym' | 'band';
+type WorkoutOrigin = 'muscle' | 'manualWorkout' | 'programDetail' | 'workoutDetail' | 'history';
 
 function nextOnboardingStep(status: OnboardingStatus): Step {
   if (status.completed) return 'home';
@@ -96,6 +97,9 @@ export default function App() {
   const [selectedEnvironment, setSelectedEnvironment] = useState<Environment>('gym');
   const [selectedWorkoutId, setSelectedWorkoutId] = useState<string | null>(null);
   const [selectedProgramId, setSelectedProgramId] = useState<string | null>(null);
+  const [previewOrigin, setPreviewOrigin] = useState<WorkoutOrigin>('muscle');
+  const [previewCanStart, setPreviewCanStart] = useState(true);
+  const [workoutDetailOrigin, setWorkoutDetailOrigin] = useState<'history' | 'programDetail'>('history');
   const [techniqueContext, setTechniqueContext] = useState<TechniqueWorkoutContext | null>(null);
   const [techniquePrefill, setTechniquePrefill] = useState<{workoutExerciseId: string; setNumber: number; repCount: number; analysisId: string} | null>(null);
   const [devicesOrigin, setDevicesOrigin] = useState<'home' | 'progress'>('home');
@@ -140,7 +144,7 @@ export default function App() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       if (step === 'preview') {
-        setStep(selectedMuscle ? 'muscle' : 'home');
+        setStep(previewOrigin === 'manualWorkout' ? 'home' : previewOrigin);
         return true;
       }
       if (step === 'manualWorkout') { setStep('home'); return true; }
@@ -160,7 +164,7 @@ export default function App() {
       if (step === 'technique') { setStep(techniqueContext ? 'active' : 'progress'); setTechniqueContext(null); return true; }
       if (step === 'programSetup' || step === 'programDetail') { setStep('programs'); return true; }
       if (step === 'workoutDetail') {
-        setStep('history');
+        setStep(workoutDetailOrigin);
         return true;
       }
       if (step === 'summary') {
@@ -173,7 +177,7 @@ export default function App() {
       return false;
     });
     return () => subscription.remove();
-  }, [step, selectedMuscle, techniqueContext, devicesOrigin]);
+  }, [step, previewOrigin, workoutDetailOrigin, techniqueContext, devicesOrigin]);
 
   async function getOnboarding(current: AuthTokens) {
     const status = await api.onboardingStatus(current.access_token);
@@ -417,14 +421,14 @@ export default function App() {
         setStep('home');
       }} />}
       {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onManualWorkout={() => {setSelectedMuscle(null); setStep('manualWorkout');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => {setDevicesOrigin('home');setStep('devices')}} onProfile={() => setStep('profileSettings')} />}
-      {step === 'manualWorkout' && <ManualWorkoutScreen accessToken={access} onBack={() => setStep('home')} onCreated={next => {setWorkout(next);setSelectedMuscle(null);setSelectedEnvironment(next.workout.environment);setStep('preview')}} />}
+      {step === 'manualWorkout' && <ManualWorkoutScreen accessToken={access} onBack={() => setStep('home')} onCreated={next => {setWorkout(next);setSelectedMuscle(null);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('manualWorkout');setPreviewCanStart(true);setStep('preview')}} />}
       {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} />}
-      {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next); setStep('preview');}} />}
-      {step === 'preview' && workout && <WorkoutPreviewScreen accessToken={access} workout={workout} onBack={() => setStep(selectedMuscle ? 'muscle' : 'home')} onStart={next => {void updateWorkout(next); setStep('active');}} />}
+      {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next);setPreviewOrigin('muscle');setPreviewCanStart(true);setStep('preview');}} />}
+      {step === 'preview' && workout && <WorkoutPreviewScreen accessToken={access} workout={workout} canStart={previewCanStart} onBack={() => setStep(previewOrigin === 'manualWorkout' ? 'home' : previewOrigin)} onStart={next => {void updateWorkout(next); setStep('active');}} />}
       {step === 'active' && workout && <ActiveWorkoutScreen accessToken={access} workout={workout} onWorkoutChange={next => {void updateWorkout(next);}} onFinish={finishWorkout} onCancel={cancelWorkout} techniquePrefill={techniquePrefill} onTechnique={context => {setTechniqueContext(context); setStep('technique');}} />}
       {step === 'summary' && summary && <WorkoutSummaryScreen result={summary} onDone={() => {setWorkout(null); setSummary(null); setSelectedMuscle(null); setStep('home');}} />}
-      {step === 'history' && <HistoryScreen accessToken={access} onBack={() => setStep('home')} onSelect={workoutId => {setSelectedWorkoutId(workoutId); setStep('workoutDetail');}} />}
-      {step === 'workoutDetail' && selectedWorkoutId && <WorkoutDetailScreen accessToken={access} workoutId={selectedWorkoutId} onBack={() => setStep('history')} onRepeat={next => {setWorkout(next); setSelectedMuscle(next.workout.muscle as MuscleId); setSelectedEnvironment(next.workout.environment); setStep('preview');}} />}
+      {step === 'history' && <HistoryScreen accessToken={access} onBack={() => setStep('home')} onSelect={workoutId => {setSelectedWorkoutId(workoutId);setWorkoutDetailOrigin('history');setStep('workoutDetail');}} />}
+      {step === 'workoutDetail' && selectedWorkoutId && <WorkoutDetailScreen accessToken={access} workoutId={selectedWorkoutId} backLabel={workoutDetailOrigin === 'programDetail' ? 'Программа' : 'История'} onBack={() => setStep(workoutDetailOrigin)} onOpenPlanned={next => {setWorkout(next);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} onResume={next => {void updateWorkout(next);setStep('active');}} onRepeat={next => {setWorkout(next);setSelectedWorkoutId(next.workout.id);setSelectedMuscle(next.workout.muscle as MuscleId);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} />}
       {step === 'nutrition' && <NutritionScreen accessToken={access} onBack={() => setStep('home')} onSetup={() => setStep('nutritionSetup')} onAddFood={() => setStep('foodSearch')} onRecipes={() => setStep('recipes')} onAI={() => setStep('aiFood')} />}
       {step === 'nutritionSetup' && <NutritionSetupScreen accessToken={access} onBack={() => setStep('nutrition')} onSaved={() => setStep('nutrition')} />}
       {step === 'foodSearch' && <FoodSearchScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} onCustom={() => setStep('customFood')} onRecipes={() => setStep('recipes')} />}
@@ -442,7 +446,7 @@ export default function App() {
       {step === 'weeklyAI' && <WeeklyAIReportScreen accessToken={access} onBack={() => setStep('aiCoach')} />}
       {step === 'programs' && <ProgramsScreen accessToken={access} onBack={() => setStep('home')} onCreate={() => setStep('programSetup')} onOpen={programId => {setSelectedProgramId(programId); setStep('programDetail');}} />}
       {step === 'programSetup' && <ProgramSetupScreen accessToken={access} onBack={() => setStep('programs')} onCreated={program => {setSelectedProgramId(program.program.id); setStep('programDetail');}} />}
-      {step === 'programDetail' && selectedProgramId && <ProgramDetailScreen accessToken={access} programId={selectedProgramId} onBack={() => setStep('programs')} onArchived={() => {setSelectedProgramId(null); setStep('programs');}} onWorkout={(next, muscle) => {setWorkout(next); setSelectedMuscle(muscle); setSelectedEnvironment(next.workout.environment); setStep('preview');}} />}
+      {step === 'programDetail' && selectedProgramId && <ProgramDetailScreen accessToken={access} programId={selectedProgramId} onBack={() => setStep('programs')} onArchived={() => {setSelectedProgramId(null); setStep('programs');}} onWorkout={(next, muscle, canStart) => {setSelectedMuscle(muscle);setSelectedEnvironment(next.workout.environment);if(next.workout.status==='completed'||next.workout.status==='cancelled'){setSelectedWorkoutId(next.workout.id);setWorkoutDetailOrigin('programDetail');setStep('workoutDetail');return;}setWorkout(next);setPreviewOrigin('programDetail');setPreviewCanStart(canStart);if(next.workout.status==='active'&&canStart){void updateWorkout(next);setStep('active');}else setStep('preview');}} />}
       </View>
       {mainTab ? <BottomNavigation current={mainTab} onSelect={navigateMain} /> : null}
       </SafeAreaView>

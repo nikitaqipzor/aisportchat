@@ -99,69 +99,14 @@ export function HomeScreen({
           hitSlop={4}
           onPress={onProfile}
           style={({pressed}) => [styles.profileButton, pressed && styles.pressed]}>
-          <Text style={styles.profileText}>Н</Text>
+          <Text style={styles.profileText}>Я</Text>
         </Pressable>
       </View>
 
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Открыть восстановление и готовность"
-        testID="home-recovery"
-        onPress={onRecovery}
-        style={({pressed}) => [styles.recoveryCard, pressed && styles.pressed]}>
-        <View style={styles.flexShrink}>
-          <Text style={styles.programKicker}>READINESS</Text>
-          <Text style={styles.recoveryTitle}>{readinessLoading ? 'Считаем…' : readinessError ? 'Нет данных' : readiness?.check_in_completed ? `${readiness.score}/100` : 'Отметить состояние'}</Text>
-          <Text style={styles.programMeta}>{readinessLoading ? 'Загружаем показатели готовности' : readinessError ? 'Открой, чтобы повторить загрузку' : readiness?.check_in_completed ? `Объём ×${readiness.volume_multiplier.toFixed(2)} · интенсивность ×${readiness.intensity_multiplier.toFixed(2)}` : 'Сон · энергия · стресс · болезненность'}</Text>
-        </View>
-        <Text style={styles.programArrow}>→</Text>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Открыть подключённые устройства"
-        testID="home-devices"
-        onPress={onDevices}
-        style={({pressed}) => [styles.deviceCard, pressed && styles.pressed]}>
-        <View style={styles.flexShrink}>
-          <Text style={styles.programKicker}>XIAOMI / HEALTH CONNECT</Text>
-          <Text style={styles.deviceTitle}>{readinessLoading ? 'Проверяем подключение…' : readiness?.wearable ? 'Часы синхронизированы' : 'Подключить часы'}</Text>
-          <Text style={styles.programMeta}>{readiness?.wearable ? `${readiness.wearable.source_label} · сон ${Math.floor(readiness.wearable.sleep_minutes/60)} ч ${readiness.wearable.sleep_minutes%60} мин` : 'Xiaomi Watch S3 · сон · шаги · тренировки'}</Text>
-        </View>
-        <Text style={styles.programArrow}>→</Text>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Спросить AI тренера"
-        testID="home-ai-coach"
-        onPress={onAI}
-        style={({pressed}) => [styles.aiCard, pressed && styles.pressed]}>
-        <View style={styles.flexShrink}>
-          <Text style={styles.aiKicker}>AI COACH</Text>
-          <Text style={styles.aiTitle}>Спросить персонального тренера</Text>
-        </View>
-        <Text style={styles.aiArrow}>→</Text>
-      </Pressable>
-
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Открыть тренировочную программу"
-        testID="home-program"
-        onPress={onPrograms}
-        style={({pressed}) => [styles.programCard, pressed && styles.pressed]}>
-        <View style={styles.flexShrink}>
-          <Text style={styles.programKicker}>ПРОГРАММА</Text>
-          <Text style={styles.programTitle}>План на 4 / 8 / 12 недель</Text>
-          <Text style={styles.programMeta}>Календарь · deload · adherence · автоперенос</Text>
-        </View>
-        <Text style={styles.programArrow}>→</Text>
-      </Pressable>
-
       <Text accessibilityRole="header" style={styles.title}>Что тренируем сегодня?</Text>
-      <Text style={styles.subtitle}>Выбери место тренировки, затем группу мышц. На следующем экране увидишь историю нагрузки и персональную тренировку.</Text>
-      <AppButton label="Собрать тренировку вручную" variant="secondary" testID="home-manual-workout" disabled={!environmentReady} onPress={onManualWorkout} />
+      <Text style={styles.subtitle}>Выбери место и группу мышц или собери тренировку вручную.</Text>
+      <AppButton label="Собрать тренировку вручную" testID="home-manual-workout" disabled={!environmentReady} onPress={onManualWorkout} />
 
       {profileLoading ? <View accessibilityRole="progressbar" accessibilityLabel="Загрузка мест тренировки" style={styles.inlineLoading}><ActivityIndicator size="small"/><Text style={styles.programMeta}>Загружаем доступные места…</Text></View> : null}
       {profileState === 'cached-stale' ? <View style={styles.notice}><Text style={styles.noticeText}>Показаны сохранённые места тренировок. Данные могут быть устаревшими.</Text><AppButton label="Повторить" variant="secondary" onPress={() => void loadProfile()}/></View> : null}
@@ -206,6 +151,62 @@ export function HomeScreen({
         ))}
       </View>
 
+      <Text accessibilityRole="header" style={styles.sectionTitle}>Другие возможности</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Открыть восстановление и готовность"
+        testID="home-recovery"
+        onPress={onRecovery}
+        style={({pressed}) => [styles.recoveryCard, pressed && styles.pressed]}>
+        <View style={styles.flexShrink}>
+          <Text style={styles.programKicker}>ГОТОВНОСТЬ</Text>
+          <Text style={styles.recoveryTitle}>{readinessLoading ? 'Считаем…' : readinessError ? 'Нет данных' : readiness?.check_in_completed ? `${readiness.score}/100` : 'Отметить состояние'}</Text>
+          <Text style={styles.programMeta}>{readinessLoading ? 'Загружаем показатели готовности' : readinessError ? 'Открой, чтобы повторить загрузку' : readiness?.check_in_completed ? `Объём ×${readiness.volume_multiplier.toFixed(2)} · интенсивность ×${readiness.intensity_multiplier.toFixed(2)}` : 'Сон · энергия · стресс · болезненность'}</Text>
+        </View>
+        <Text style={styles.programArrow}>→</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Открыть подключённые устройства"
+        testID="home-devices"
+        onPress={onDevices}
+        style={({pressed}) => [styles.deviceCard, pressed && styles.pressed]}>
+        <View style={styles.flexShrink}>
+          <Text style={styles.programKicker}>ЗДОРОВЬЕ И ЧАСЫ</Text>
+          <Text style={styles.deviceTitle}>{readinessLoading ? 'Проверяем подключение…' : readiness?.wearable ? 'Часы синхронизированы' : 'Подключить часы'}</Text>
+          <Text style={styles.programMeta}>{readiness?.wearable ? `${readiness.wearable.source_label} · сон ${Math.floor(readiness.wearable.sleep_minutes/60)} ч ${readiness.wearable.sleep_minutes%60} мин` : 'Xiaomi Watch S3 · сон · шаги · тренировки'}</Text>
+        </View>
+        <Text style={styles.programArrow}>→</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Спросить AI тренера"
+        testID="home-ai-coach"
+        onPress={onAI}
+        style={({pressed}) => [styles.aiCard, pressed && styles.pressed]}>
+        <View style={styles.flexShrink}>
+          <Text style={styles.aiKicker}>AI ТРЕНЕР</Text>
+          <Text style={styles.aiTitle}>Спросить персонального тренера</Text>
+        </View>
+        <Text style={styles.aiArrow}>→</Text>
+      </Pressable>
+
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Открыть тренировочную программу"
+        testID="home-program"
+        onPress={onPrograms}
+        style={({pressed}) => [styles.programCard, pressed && styles.pressed]}>
+        <View style={styles.flexShrink}>
+          <Text style={styles.programKicker}>ПРОГРАММА</Text>
+          <Text style={styles.programTitle}>План на 4 / 8 / 12 недель</Text>
+          <Text style={styles.programMeta}>Календарь · снижение нагрузки · соблюдение плана</Text>
+        </View>
+        <Text style={styles.programArrow}>→</Text>
+      </Pressable>
+
       <AppButton label="История тренировок" variant="secondary" testID="home-history" onPress={onHistory} />
     </ScrollView>
   );
@@ -223,7 +224,7 @@ const styles = StyleSheet.create({
   deviceTitle: {fontSize: 16, fontWeight: '900', color: colors.text, marginTop: 4},
   recoveryTitle: {fontSize: 24, fontWeight: '900', color: colors.text, marginTop: 3},
   aiCard: {backgroundColor: colors.primary, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 88},
-  aiKicker: {color: colors.inverse, fontSize: 10, fontWeight: '900', letterSpacing: 1.3, opacity: 0.55},
+  aiKicker: {color: colors.inverse, fontSize: 11, fontWeight: '900', letterSpacing: 1.3},
   aiTitle: {color: colors.inverse, fontSize: 16, fontWeight: '900', marginTop: 4},
   aiArrow: {color: colors.inverse, fontSize: 28, fontWeight: '700'},
   programCard: {borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', minHeight: 94},

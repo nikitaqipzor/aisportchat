@@ -27,6 +27,7 @@ type Memory struct {
 	nutrition         map[string]NutritionProfile
 	foodItems         map[string]FoodItem
 	foodEntries       map[string][]FoodEntry
+	foodOperations    map[string]foodOperation
 	recipes           map[string]Recipe
 	measurements      map[string][]BodyMeasurement
 	bodyScans         map[string]BodyScan
@@ -54,6 +55,7 @@ func NewMemory() *Memory {
 		nutrition:         map[string]NutritionProfile{},
 		foodItems:         seedFoodItems(),
 		foodEntries:       map[string][]FoodEntry{},
+		foodOperations:    map[string]foodOperation{},
 		recipes:           map[string]Recipe{},
 		measurements:      map[string][]BodyMeasurement{},
 		bodyScans:         map[string]BodyScan{},
@@ -831,6 +833,42 @@ func (m *Memory) CreateFoodEntry(_ context.Context, in FoodEntry) (FoodEntry, er
 	}
 	m.foodEntries[in.UserID] = append(m.foodEntries[in.UserID], in)
 	return in, nil
+}
+
+type foodOperation struct {
+	Hash string
+	LoggedAt time.Time
+}
+
+func (m *Memory) CreateFoodEntries(ctx context.Context, userID, operationKey, payloadHash string, entries []FoodEntry) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := ctx.Err(); err != nil { return time.Time{}, err }
+	if len(entries) == 0 { return time.Time{}, ErrInvalidState }
+	if _, ok := m.users[userID]; !ok { return time.Time{}, ErrNotFound }
+	if operationKey != "" {
+		if previous, ok := m.foodOperations[userID+"\x00"+operationKey]; ok {
+			if previous.Hash != payloadHash { return time.Time{}, ErrIdempotencyConflict }
+			return previous.LoggedAt, nil
+		}
+	}
+	when := entries[0].LoggedAt
+	if when.IsZero() { when = time.Now().UTC() }
+	for _, entry := range entries {
+		if entry.UserID != userID || entry.LoggedAt != entries[0].LoggedAt || entry.QuantityG <= 0 {
+			return time.Time{}, ErrInvalidState
+		}
+		if _, ok := m.foodItems[entry.FoodID]; !ok { return time.Time{}, ErrNotFound }
+	}
+	for _, entry := range entries {
+		entry.ID = newID()
+		entry.LoggedAt = when
+		m.foodEntries[userID] = append(m.foodEntries[userID], entry)
+	}
+	if operationKey != "" {
+		m.foodOperations[userID+"\x00"+operationKey] = foodOperation{Hash: payloadHash, LoggedAt: when}
+	}
+	return when, nil
 }
 
 func (m *Memory) ListFoodEntries(_ context.Context, userID string, from, to time.Time) ([]FoodEntry, error) {

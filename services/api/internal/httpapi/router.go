@@ -873,17 +873,41 @@ func (s *Server) setNutritionProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// nutritionLocation preserves the legacy UTC default for existing API clients.
+func nutritionLocation(w http.ResponseWriter, r *http.Request) (*time.Location, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("time_zone"))
+	if raw == "" {
+		return time.UTC, true
+	}
+	// Go accepts "Local" as the server process's zone; client calendar days must
+	// never depend on the host environment.
+	if raw == "Local" || len(raw) > 128 {
+		writeError(w, http.StatusBadRequest, "time_zone must be a valid IANA time zone")
+		return nil, false
+	}
+	loc, err := time.LoadLocation(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "time_zone must be a valid IANA time zone")
+		return nil, false
+	}
+	return loc, true
+}
+
 func (s *Server) nutritionToday(w http.ResponseWriter, r *http.Request) {
+	loc, ok := nutritionLocation(w, r)
+	if !ok {
+		return
+	}
 	at := time.Now().UTC()
 	if raw := strings.TrimSpace(r.URL.Query().Get("date")); raw != "" {
-		parsed, err := time.Parse("2006-01-02", raw)
+		parsed, err := time.ParseInLocation("2006-01-02", raw, loc)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
 			return
 		}
 		at = parsed
 	}
-	out, err := s.nutritionService.Day(r.Context(), currentUserID(r.Context()), at)
+	out, err := s.nutritionService.DayInLocation(r.Context(), currentUserID(r.Context()), at, loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -892,13 +916,17 @@ func (s *Server) nutritionToday(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) nutritionHistory(w http.ResponseWriter, r *http.Request) {
+	loc, ok := nutritionLocation(w, r)
+	if !ok {
+		return
+	}
 	days := 7
 	if raw := r.URL.Query().Get("days"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
 			days = n
 		}
 	}
-	out, err := s.nutritionService.History(r.Context(), currentUserID(r.Context()), days, time.Now().UTC())
+	out, err := s.nutritionService.HistoryInLocation(r.Context(), currentUserID(r.Context()), days, time.Now().UTC(), loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -922,6 +950,10 @@ func (s *Server) searchFoods(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logFoodEntry(w http.ResponseWriter, r *http.Request) {
+	loc, ok := nutritionLocation(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		FoodID    string     `json:"food_id"`
 		MealType  string     `json:"meal_type"`
@@ -931,7 +963,7 @@ func (s *Server) logFoodEntry(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.nutritionService.LogFood(r.Context(), currentUserID(r.Context()), in.FoodID, in.MealType, in.QuantityG, in.LoggedAt)
+	out, err := s.nutritionService.LogFoodInLocation(r.Context(), currentUserID(r.Context()), in.FoodID, in.MealType, in.QuantityG, in.LoggedAt, loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1008,15 +1040,20 @@ func (s *Server) listRecipes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logRecipe(w http.ResponseWriter, r *http.Request) {
+	loc, ok := nutritionLocation(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		MealType string     `json:"meal_type"`
 		Scale    float64    `json:"scale,omitempty"`
 		LoggedAt *time.Time `json:"logged_at,omitempty"`
+		IdempotencyKey string `json:"idempotency_key,omitempty"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.nutritionService.LogRecipe(r.Context(), currentUserID(r.Context()), r.PathValue("recipe_id"), in.MealType, in.Scale, in.LoggedAt)
+	out, err := s.nutritionService.LogRecipeInLocation(r.Context(), currentUserID(r.Context()), r.PathValue("recipe_id"), in.MealType, in.Scale, in.LoggedAt, in.IdempotencyKey, loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1117,15 +1154,20 @@ func (s *Server) aiParseFoodPhoto(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) aiConfirmFood(w http.ResponseWriter, r *http.Request) {
+	loc, ok := nutritionLocation(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		MealType string                      `json:"meal_type"`
 		Items    []aifitness.ConfirmFoodItem `json:"items"`
 		LoggedAt *time.Time                  `json:"logged_at,omitempty"`
+		IdempotencyKey string               `json:"idempotency_key,omitempty"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.aiService.ConfirmFood(r.Context(), currentUserID(r.Context()), in.MealType, in.Items, in.LoggedAt)
+	out, err := s.aiService.ConfirmFoodInLocation(r.Context(), currentUserID(r.Context()), in.MealType, in.Items, in.LoggedAt, in.IdempotencyKey, loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1203,6 +1245,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, store.ErrInvalidState):
 		writeError(w, http.StatusConflict, "workout state does not allow this operation")
+	case errors.Is(err, store.ErrIdempotencyConflict):
+		writeError(w, http.StatusConflict, "idempotency_key was already used with different food items")
 	default:
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	}

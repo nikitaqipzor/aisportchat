@@ -64,7 +64,10 @@ assert.match(picker, /PHOTO_PICK_TOO_LARGE/);
 assert.match(picker, /PHOTO_PICK_UNSUPPORTED/);
 
 const diary = fs.readFileSync('apps/mobile/src/screens/NutritionScreen.tsx', 'utf8');
-assert.match(diary, /setSelectedDate\(next\.selectedDate\)/);
-assert.match(diary, /setDay\(next\.day\)/);
+assert.match(diary, /await api\.repeatFoodEntry\(accessToken, entry\.id, entry\.meal_type\)/);
+assert.match(diary, /const today = currentLocalDate\(\)/);
+assert.match(diary, /if \(today !== requestedDate\) openDate\(today\)/);
+assert.match(diary, /else \{ setDay\(null\); await load\(\); \}/);
+assert.doesNotMatch(diary, /setDay\(repeatedDay\)/);
 
 console.log('mobile nutrition behavioral/static regressions: PASS');

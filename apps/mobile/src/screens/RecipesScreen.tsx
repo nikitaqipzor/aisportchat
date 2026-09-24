@@ -3,6 +3,8 @@ import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, V
 import {api, FoodEntry, FoodItem, Recipe} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
+import {withFoodIdempotency} from '../domain/foodIdempotency';
+import {localTimeZone} from '../domain/date';
 
 type DraftItem={food:FoodItem;grams:string};
 const meals:Array<{id:FoodEntry['meal_type'];title:string}>=[{id:'breakfast',title:'Завтрак'},{id:'lunch',title:'Обед'},{id:'dinner',title:'Ужин'},{id:'snack',title:'Перекус'}];
@@ -18,7 +20,7 @@ export function RecipesScreen({accessToken,onBack,onLogged}:{accessToken:string;
   const canSave=name.trim().length>=2&&validDraft&&!saving;
   const total=useMemo(()=>draft.reduce((acc,x)=>{const g=numberValue(x.grams)||0;const f=g/100;return {kcal:acc.kcal+x.food.kcal_per_100g*f,p:acc.p+x.food.protein_per_100g*f,f:acc.f+x.food.fat_per_100g*f,c:acc.c+x.food.carbs_per_100g*f};},{kcal:0,p:0,f:0,c:0}),[draft]);
   async function save(){if(!canSave)return;try{setSaving(true);setError('');await api.createRecipe(accessToken,{name:name.trim(),items:draft.map(x=>({food_id:x.food.id,quantity_g:numberValue(x.grams)}))});setName('');setDraft([]);setFoods([]);await load();}catch(e){setError(e instanceof Error?e.message:'Не удалось сохранить рецепт');}finally{setSaving(false)}}
-  async function log(recipe:Recipe){try{setLoggingId(recipe.id);setError('');await api.logRecipe(accessToken,recipe.id,{meal_type:meal,scale:1});onLogged();}catch(e){setError(e instanceof Error?e.message:'Не удалось добавить рецепт');}finally{setLoggingId('')}}
+  async function log(recipe:Recipe){if(loggingId)return;try{setLoggingId(recipe.id);setError('');await withFoodIdempotency(`recipe-${recipe.id}`,JSON.stringify({recipeId:recipe.id,meal,scale:1}),key=>api.logRecipe(accessToken,recipe.id,{meal_type:meal,scale:1,idempotency_key:key},localTimeZone()));onLogged();}catch(e){setError(e instanceof Error?e.message:'Не удалось добавить рецепт');}finally{setLoggingId('')}}
   return <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled"><Pressable accessibilityRole="button" accessibilityLabel="Вернуться к питанию" hitSlop={8} onPress={onBack} style={styles.navButton}><Text style={styles.back}>← Питание</Text></Pressable><Text style={styles.kicker}>БЫСТРАЯ ЕДА</Text><Text accessibilityRole="header" style={styles.title}>Рецепты</Text><Text style={styles.subtitle}>Сохраните часто повторяющийся набор продуктов и добавляйте его в дневник одним нажатием.</Text>
     <Text style={styles.label}>Добавить в</Text><View style={styles.meals} accessibilityRole="radiogroup">{meals.map(x=><Pressable key={x.id} accessibilityRole="radio" accessibilityState={{selected:meal===x.id}} onPress={()=>setMeal(x.id)} style={[styles.pill,meal===x.id&&styles.active]}><Text style={[styles.pillText,meal===x.id&&styles.white]}>{x.title}</Text></Pressable>)}</View>
     {loading?<View style={styles.state}><ActivityIndicator color={colors.text}/><Text style={styles.muted}>Загружаем рецепты…</Text></View>:null}

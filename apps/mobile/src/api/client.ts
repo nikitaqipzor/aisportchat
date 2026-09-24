@@ -931,18 +931,21 @@ export const api = {
   }) {
     return request<NutritionProfile>('/nutrition/profile', {method: 'PUT', body: JSON.stringify(payload)}, accessToken);
   },
-  nutritionToday(accessToken: string, date?: string) {
-    const query = date ? `?date=${encodeURIComponent(date)}` : '';
+  nutritionToday(accessToken: string, date?: string, timeZone?: string) {
+    const params = [date ? `date=${encodeURIComponent(date)}` : '', timeZone ? `time_zone=${encodeURIComponent(timeZone)}` : ''].filter(Boolean);
+    const query = params.length ? `?${params.join('&')}` : '';
     return request<NutritionDay>(`/nutrition/today${query}`, {method: 'GET'}, accessToken);
   },
-  nutritionHistory(accessToken: string, days = 7) {
-    return request<{items: NutritionHistoryItem[]}>(`/nutrition/history?days=${days}`, {method: 'GET'}, accessToken);
+  nutritionHistory(accessToken: string, days = 7, timeZone?: string) {
+    const query = timeZone ? `&time_zone=${encodeURIComponent(timeZone)}` : '';
+    return request<{items: NutritionHistoryItem[]}>(`/nutrition/history?days=${days}${query}`, {method: 'GET'}, accessToken);
   },
   searchFoods(accessToken: string, query: string, limit = 30) {
     return request<{items: FoodItem[]}>(`/nutrition/foods?query=${encodeURIComponent(query)}&limit=${limit}`, {method: 'GET'}, accessToken);
   },
-  logFood(accessToken: string, payload: {food_id: string; meal_type: FoodEntry['meal_type']; quantity_g: number; logged_at?: string}) {
-    return request<NutritionDay>('/nutrition/entries', {method: 'POST', body: JSON.stringify(payload)}, accessToken);
+  logFood(accessToken: string, payload: {food_id: string; meal_type: FoodEntry['meal_type']; quantity_g: number; logged_at?: string}, timeZone?: string) {
+    const query = timeZone ? `?time_zone=${encodeURIComponent(timeZone)}` : '';
+    return request<NutritionDay>(`/nutrition/entries${query}`, {method: 'POST', body: JSON.stringify(payload)}, accessToken);
   },
   deleteFoodEntry(accessToken: string, entryId: string) {
     return request<void>(`/nutrition/entries/${entryId}`, {method: 'DELETE'}, accessToken);
@@ -963,8 +966,9 @@ export const api = {
   createRecipe(accessToken: string, payload: {name: string; items: Array<{food_id: string; quantity_g: number}>}) {
     return request<Recipe>('/nutrition/recipes', {method: 'POST', body: JSON.stringify(payload)}, accessToken);
   },
-  logRecipe(accessToken: string, recipeId: string, payload: {meal_type: FoodEntry['meal_type']; scale?: number}) {
-    return request<NutritionDay>(`/nutrition/recipes/${recipeId}/log`, {method: 'POST', body: JSON.stringify(payload)}, accessToken);
+  logRecipe(accessToken: string, recipeId: string, payload: {meal_type: FoodEntry['meal_type']; scale?: number; idempotency_key: string}, timeZone?: string) {
+    const query = timeZone ? `?time_zone=${encodeURIComponent(timeZone)}` : '';
+    return request<NutritionDay>(`/nutrition/recipes/${recipeId}/log${query}`, {method: 'POST', body: JSON.stringify(payload)}, accessToken);
   },
   nutritionCorrelation(accessToken: string, days = 30) {
     return request<NutritionCorrelation>(`/nutrition/correlation?days=${days}`, {method: 'GET'}, accessToken);
@@ -1020,8 +1024,9 @@ export const api = {
   aiParseFoodPhoto(accessToken: string, imageDataUrl: string) {
     return request<AIFoodDraft>('/ai/food/photo', {method: 'POST', body: JSON.stringify({image_data_url: imageDataUrl})}, accessToken);
   },
-  aiConfirmFood(accessToken: string, mealType: 'breakfast'|'lunch'|'dinner'|'snack', items: Array<{food_id: string; quantity_g: number}>) {
-    return request<NutritionDay>('/ai/food/confirm', {method: 'POST', body: JSON.stringify({meal_type: mealType, items})}, accessToken);
+  aiConfirmFood(accessToken: string, mealType: 'breakfast'|'lunch'|'dinner'|'snack', items: Array<{food_id: string; quantity_g: number}>, idempotencyKey: string, timeZone?: string) {
+    const query = timeZone ? `?time_zone=${encodeURIComponent(timeZone)}` : '';
+    return request<NutritionDay>(`/ai/food/confirm${query}`, {method: 'POST', body: JSON.stringify({meal_type: mealType, items, idempotency_key: idempotencyKey})}, accessToken);
   },
   aiChat(accessToken: string, message: string, history: AIChatMessage[] = [], signal?: AbortSignal) {
     return request<AIChatResponse>('/ai/chat', {method: 'POST', body: JSON.stringify({message, history}), signal}, accessToken);

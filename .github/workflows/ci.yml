@@ -85,6 +85,11 @@ jobs:
           node scripts/test-mobile-home-reliability.mjs
           node scripts/test-mobile-nutrition-regressions.mjs
           node scripts/test-mobile-rest-timer.mjs
+          node scripts/test-mobile-program-resume.mjs
+          node scripts/test-mobile-nutrition-calendar.mjs
+          node scripts/test-mobile-food-idempotency.mjs
+          node scripts/test-mobile-devices-status.mjs
+          node scripts/test-mobile-design-accessibility.mjs
 
   android-internal:
     runs-on: ubuntu-latest

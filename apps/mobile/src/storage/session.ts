@@ -37,7 +37,15 @@ export const sessionStorage = {
   async clearTokens() { await mutateKeychain(() => Keychain.resetGenericPassword({service:TOKEN_SERVICE})); },
   async revokeCurrentSession() { const owner = await currentOwnerUserId(); if (owner) await AsyncStorage.setItem(revokedKey(owner), new Date().toISOString()); await this.clearTokens(); },
   async isSessionRevoked(owner: string) { return (await AsyncStorage.getItem(revokedKey(owner))) !== null; },
-  async clearTransientData(owner?: string) { const target = owner ?? await currentOwnerUserId(); if (!target) return; await Promise.all(['active-workout','offline-queue','ai-chat'].map(kind => AsyncStorage.removeItem(key(kind,target)))); await Promise.all(LEGACY_KEYS.map(item => AsyncStorage.removeItem(item))); },
+  async clearTransientData(owner?: string) {
+    const target = owner ?? await currentOwnerUserId();
+    if (!target) return;
+    await Promise.all(['active-workout', 'offline-queue', 'ai-chat'].map(kind => AsyncStorage.removeItem(key(kind, target))));
+    const pendingPrefix = `fitness.food-write.v1.${encodeURIComponent(target)}.`;
+    const pendingKeys = (await AsyncStorage.getAllKeys()).filter(item => item.startsWith(pendingPrefix));
+    await Promise.all(pendingKeys.map(item => AsyncStorage.removeItem(item)));
+    await Promise.all(LEGACY_KEYS.map(item => AsyncStorage.removeItem(item)));
+  },
   async saveTrainingEnvironments(environments: TrainingEnvironment[], initiatingOwnerUserId?: string) { const owner=initiatingOwnerUserId??await currentOwnerUserId(); const valid=[...new Set(environments.filter(value=>value==='home'||value==='gym'||value==='band'))]; if(!owner||!valid.length||await currentOwnerUserId()!==owner)return false; await AsyncStorage.setItem(key('training-environments',owner),JSON.stringify({environments:valid,cachedAt:new Date().toISOString()} satisfies TrainingEnvironmentCache)); return await currentOwnerUserId()===owner; },
   async loadTrainingEnvironments(): Promise<TrainingEnvironmentCache|null> { return loadOwned<TrainingEnvironmentCache>('training-environments'); },
   async clearTrainingEnvironments(owner?: string) { const target=owner??await currentOwnerUserId(); if(target)await AsyncStorage.removeItem(key('training-environments',target)); },

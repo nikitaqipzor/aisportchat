@@ -1,7 +1,8 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {api, FoodEntry, FoodItem, NutritionDay} from '../api/client';
 import {AppButton} from '../components/AppButton';
+import {localTimeZone} from '../domain/date';
 import {colors, control, radius, spacing} from '../theme/tokens';
 
 const meals: Array<{id: FoodEntry['meal_type']; title: string}> = [
@@ -21,27 +22,44 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
   const [loading,setLoading]=useState(false);
   const [adding,setAdding]=useState(false);
   const [hasSearched,setHasSearched]=useState(false);
+  const requestVersion=useRef(0);
 
-  useEffect(()=>{void search('')},[accessToken]);
+  useEffect(()=>{
+    void search('');
+    return ()=>{requestVersion.current+=1};
+  },[accessToken]);
+
+  function invalidateResults(){
+    requestVersion.current+=1;
+    setSelected(null);
+    setItems([]);
+    setError('');
+    setLoading(false);
+    setHasSearched(false);
+  }
 
   async function search(value=query){
-    try { setLoading(true); setError(''); setHasSearched(true); setItems((await api.searchFoods(accessToken,value.trim())).items); }
-    catch(e){setError(e instanceof Error?e.message:'Не удалось выполнить поиск');}
-    finally{setLoading(false);}
+    const version=++requestVersion.current;
+    setSelected(null);setItems([]);setLoading(true);setError('');setHasSearched(true);
+    try { const result=await api.searchFoods(accessToken,value.trim()); if(version===requestVersion.current)setItems(result.items); }
+    catch(e){if(version===requestVersion.current)setError(e instanceof Error?e.message:'Не удалось выполнить поиск');}
+    finally{if(version===requestVersion.current)setLoading(false);}
   }
   async function lookupBarcode(){
     const value=barcode.replace(/\s/g,'');
-    if(!/^\d{8,14}$/.test(value)){setError('Введите от 8 до 14 цифр штрихкода.');return;}
-    try { setLoading(true); setError(''); const food=await api.foodByBarcode(accessToken,value); setSelected(food); setItems([food]); setGrams(String(Math.round(food.serving_g||100))); }
-    catch(e){setError(e instanceof Error?e.message:'Продукт с таким штрихкодом не найден');}
-    finally{setLoading(false);}
+    const version=++requestVersion.current;
+    setSelected(null);setItems([]);setLoading(true);setError('');setHasSearched(true);
+    if(!/^\d{8,14}$/.test(value)){setError('Введите от 8 до 14 цифр штрихкода.');setLoading(false);return;}
+    try { const food=await api.foodByBarcode(accessToken,value); if(version===requestVersion.current){setSelected(food);setItems([food]);setGrams(String(Math.round(food.serving_g||100)));} }
+    catch(e){if(version===requestVersion.current)setError(e instanceof Error?e.message:'Продукт с таким штрихкодом не найден');}
+    finally{if(version===requestVersion.current)setLoading(false);}
   }
   const amount=parseAmount(grams);
   const validAmount=Number.isFinite(amount)&&amount>0&&amount<=5000;
   const preview=useMemo(()=>{if(!selected||!validAmount)return null;const factor=amount/100;return{kcal:Math.round(selected.kcal_per_100g*factor),p:Math.round(selected.protein_per_100g*factor),f:Math.round(selected.fat_per_100g*factor),c:Math.round(selected.carbs_per_100g*factor)}},[selected,amount,validAmount]);
   async function add(){
     if(!selected||!validAmount||adding)return;
-    try { setAdding(true); setError(''); onLogged(await api.logFood(accessToken,{food_id:selected.id,meal_type:meal,quantity_g:amount})); }
+    try { setAdding(true); setError(''); onLogged(await api.logFood(accessToken,{food_id:selected.id,meal_type:meal,quantity_g:amount},localTimeZone())); }
     catch(e){setError(e instanceof Error?e.message:'Не удалось добавить продукт');}
     finally{setAdding(false);}
   }
@@ -51,8 +69,8 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
     <Text style={styles.kicker}>ДОБАВИТЬ ЕДУ</Text><Text accessibilityRole="header" style={styles.title}>Что добавить?</Text>
     <Text style={styles.subtitle}>Найдите продукт в каталоге или создайте свой. Значения указаны на 100 г.</Text>
     <View style={styles.actions}><AppButton label="Свой продукт" variant="secondary" onPress={onCustom} style={styles.action}/><AppButton label="Рецепты" variant="secondary" onPress={onRecipes} style={styles.action}/></View>
-    <View style={styles.searchRow}><TextInput accessibilityLabel="Поиск продукта" value={query} onChangeText={setQuery} onSubmitEditing={()=>void search()} returnKeyType="search" placeholder="Творог, рис, курица…" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Найти" onPress={()=>void search()} disabled={loading}/></View>
-    <View style={styles.searchRow}><TextInput accessibilityLabel="Штрихкод продукта" value={barcode} onChangeText={setBarcode} onSubmitEditing={()=>void lookupBarcode()} returnKeyType="search" keyboardType="number-pad" maxLength={14} placeholder="Штрихкод" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Проверить" variant="secondary" onPress={()=>void lookupBarcode()} disabled={loading||!barcode.trim()}/></View>
+    <View style={styles.searchRow}><TextInput accessibilityLabel="Поиск продукта" value={query} onChangeText={value=>{setQuery(value);invalidateResults()}} onSubmitEditing={()=>void search()} returnKeyType="search" placeholder="Творог, рис, курица…" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Найти" onPress={()=>void search()} disabled={loading}/></View>
+    <View style={styles.searchRow}><TextInput accessibilityLabel="Штрихкод продукта" value={barcode} onChangeText={value=>{setBarcode(value);invalidateResults()}} onSubmitEditing={()=>void lookupBarcode()} returnKeyType="search" keyboardType="number-pad" maxLength={14} placeholder="Штрихкод" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Проверить" variant="secondary" onPress={()=>void lookupBarcode()} disabled={loading||!barcode.trim()}/></View>
     <Text style={styles.label}>Приём пищи</Text><View style={styles.meals} accessibilityRole="radiogroup">{meals.map(x=><Pressable key={x.id} accessibilityRole="radio" accessibilityState={{selected:meal===x.id}} onPress={()=>setMeal(x.id)} style={[styles.meal,meal===x.id&&styles.mealActive]}><Text style={[styles.mealText,meal===x.id&&styles.white]}>{x.title}</Text></Pressable>)}</View>
     {loading?<View style={styles.stateRow} accessibilityLiveRegion="polite"><ActivityIndicator color={colors.text}/><Text style={styles.muted}>Ищем продукты…</Text></View>:null}
     {!loading&&hasSearched&&items.length===0&&!error?<View style={styles.emptyCard}><Text style={styles.emptyTitle}>Ничего не найдено</Text><Text style={styles.muted}>Проверьте запрос или добавьте продукт вручную.</Text><AppButton label="Создать продукт" variant="secondary" onPress={onCustom}/></View>:null}

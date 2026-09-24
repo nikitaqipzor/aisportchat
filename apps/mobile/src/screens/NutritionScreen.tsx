@@ -1,10 +1,9 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, AppState, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api} from '../api/client';
 import type {FoodEntry, NutritionDay, NutritionHistoryItem} from '../api/client';
 import {AppButton} from '../components/AppButton';
-import {currentLocalDate, shiftLocalDate} from '../domain/date';
-import {repeatedNutritionState} from '../domain/nutrition';
+import {currentLocalDate, localTimeZone, nextNutritionDateOnRollover, shiftLocalDate} from '../domain/date';
 import {colors, control, radius, spacing} from '../theme/tokens';
 
 function Metric({title, value, target, unit}: {title: string; value: number; target: number; unit: string}) {
@@ -46,37 +45,80 @@ export function NutritionScreen({
   const [repeatingId, setRepeatingId] = useState('');
   const [undoEntry, setUndoEntry] = useState<FoodEntry | null>(null);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestVersion = useRef(0);
+  const selectedDateRef = useRef(selectedDate);
+  const lastKnownTodayRef = useRef(selectedDate);
+  const followsTodayRef = useRef(true);
 
   const load = useCallback(async () => {
+    const version = ++requestVersion.current;
+    const date = selectedDateRef.current;
     try {
-      setError('');
+      if (version === requestVersion.current) setError('');
       const profile = await api.nutritionProfile(accessToken);
+      if (version !== requestVersion.current) return;
       if (!profile) {
         onSetup();
         return;
       }
-      const [selectedDay, h] = await Promise.all([api.nutritionToday(accessToken, selectedDate), api.nutritionHistory(accessToken, 7)]);
+      const zone = localTimeZone();
+      const [selectedDay, h] = await Promise.all([api.nutritionToday(accessToken, date, zone), api.nutritionHistory(accessToken, 7, zone)]);
+      if (version !== requestVersion.current || date !== selectedDateRef.current) return;
       setDay(selectedDay);
       setHistory(h.items);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Не удалось загрузить питание');
+      if (version === requestVersion.current) setError(e instanceof Error ? e.message : 'Не удалось загрузить питание');
     }
-  }, [accessToken, onSetup, selectedDate]);
+  }, [accessToken, onSetup]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+    return () => { requestVersion.current += 1; };
+  }, [load, selectedDate]);
   useEffect(() => () => { if (undoTimer.current) clearTimeout(undoTimer.current); }, []);
 
-  async function refresh() {
-    setRefreshing(true);
-    await load();
-    setRefreshing(false);
-  }
-
-  function openDate(date: string) {
-    if (date === selectedDate) return;
+  const openDate = useCallback((date: string) => {
+    const today = currentLocalDate();
+    followsTodayRef.current = date === today;
+    lastKnownTodayRef.current = today;
+    if (date === selectedDateRef.current) return;
+    requestVersion.current += 1;
+    selectedDateRef.current = date;
     setDay(null);
     setError('');
     setSelectedDate(date);
+  }, []);
+
+  const reconcileToday = useCallback(() => {
+    const today = currentLocalDate();
+    const next = nextNutritionDateOnRollover(lastKnownTodayRef.current, today, selectedDateRef.current, followsTodayRef.current);
+    lastKnownTodayRef.current = today;
+    if (next) openDate(next);
+  }, [openDate]);
+
+  useEffect(() => {
+    let midnightTimer: ReturnType<typeof setTimeout>;
+    const scheduleMidnight = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
+      midnightTimer = setTimeout(() => { reconcileToday(); scheduleMidnight(); }, nextMidnight.getTime() - now.getTime());
+    };
+    scheduleMidnight();
+    const subscription = AppState.addEventListener('change', state => {
+      if (state !== 'active') return;
+      reconcileToday();
+      clearTimeout(midnightTimer);
+      scheduleMidnight();
+    });
+    return () => { subscription.remove(); clearTimeout(midnightTimer); };
+  }, [reconcileToday]);
+
+  async function refresh() {
+    reconcileToday();
+    if (selectedDateRef.current !== selectedDate) return;
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
   }
 
   async function remove(entry: FoodEntry) {
@@ -106,7 +148,7 @@ export function NutritionScreen({
         meal_type: entry.meal_type,
         quantity_g: entry.quantity_g,
         logged_at: entry.logged_at,
-      });
+      }, localTimeZone());
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось вернуть запись');
@@ -114,13 +156,16 @@ export function NutritionScreen({
   }
 
   async function repeat(entry: FoodEntry) {
+    const requestedDate = selectedDateRef.current;
     try {
       setRepeatingId(entry.id);
       setError('');
-      const repeatedDay = await api.repeatFoodEntry(accessToken, entry.id, entry.meal_type);
-      const next = repeatedNutritionState(repeatedDay);
-      setSelectedDate(next.selectedDate);
-      setDay(next.day);
+      await api.repeatFoodEntry(accessToken, entry.id, entry.meal_type);
+      // The write endpoint may return a UTC summary; always read the local day back.
+      if (selectedDateRef.current !== requestedDate) return;
+      const today = currentLocalDate();
+      if (today !== requestedDate) openDate(today);
+      else { setDay(null); await load(); }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось повторить запись');
     } finally {

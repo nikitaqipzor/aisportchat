@@ -6,6 +6,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	_ "time/tzdata" // Resolve client IANA zones even in minimal container images.
 
 	"github.com/example/ai-fitness-os/services/api/internal/store"
 )
@@ -135,6 +136,12 @@ func (s *Service) SearchFoods(ctx context.Context, userID, query string, limit i
 }
 
 func (s *Service) LogFood(ctx context.Context, userID string, foodID, mealType string, quantityG float64, loggedAt *time.Time) (DaySummary, error) {
+	return s.LogFoodInLocation(ctx, userID, foodID, mealType, quantityG, loggedAt, time.UTC)
+}
+
+// LogFoodInLocation stores the instant in UTC and reports the containing calendar day in loc.
+// The UTC default in LogFood preserves the existing API contract for callers without a time zone.
+func (s *Service) LogFoodInLocation(ctx context.Context, userID string, foodID, mealType string, quantityG float64, loggedAt *time.Time, loc *time.Location) (DaySummary, error) {
 	if !validMeal(mealType) {
 		return DaySummary{}, errors.New("unsupported meal_type")
 	}
@@ -158,7 +165,7 @@ func (s *Service) LogFood(ctx context.Context, userID string, foodID, mealType s
 	if _, err := s.store.CreateFoodEntry(ctx, entry); err != nil {
 		return DaySummary{}, err
 	}
-	return s.Day(ctx, userID, when)
+	return s.DayInLocation(ctx, userID, when, loc)
 }
 
 func (s *Service) DeleteEntry(ctx context.Context, userID, entryID string) error {
@@ -166,16 +173,34 @@ func (s *Service) DeleteEntry(ctx context.Context, userID, entryID string) error
 }
 
 func (s *Service) Day(ctx context.Context, userID string, at time.Time) (DaySummary, error) {
-	date := at.UTC().Format("2006-01-02")
-	start, _ := time.Parse("2006-01-02", date)
-	end := start.Add(24*time.Hour - time.Nanosecond)
+	return s.DayInLocation(ctx, userID, at, time.UTC)
+}
+
+// DayInLocation defines a day by its local calendar boundaries, including 23/25-hour DST days.
+func (s *Service) DayInLocation(ctx context.Context, userID string, at time.Time, loc *time.Location) (DaySummary, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
+	local := at.In(loc)
+	date := local.Format("2006-01-02")
+	start := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)
+	end := start.AddDate(0, 0, 1)
 	nutritionProfile, err := s.store.GetNutritionProfile(ctx, userID)
 	if err != nil {
 		return DaySummary{}, err
 	}
-	entries, err := s.store.ListFoodEntries(ctx, userID, start, end)
+	// Store uses an inclusive upper bound. Query the exact next midnight, then
+	// exclude that boundary in memory; PostgreSQL rounds nanosecond timestamps to
+	// microseconds, so an end of next-midnight-minus-1ns could round back up.
+	queriedEntries, err := s.store.ListFoodEntries(ctx, userID, start, end)
 	if err != nil {
 		return DaySummary{}, err
+	}
+	entries := make([]store.FoodEntry, 0, len(queriedEntries))
+	for _, entry := range queriedEntries {
+		if entry.LoggedAt.Before(end) {
+			entries = append(entries, entry)
+		}
 	}
 	out := DaySummary{Date: date, Profile: nutritionProfile, Entries: entries}
 	for _, e := range entries {
@@ -196,7 +221,7 @@ func (s *Service) Day(ctx context.Context, userID string, at time.Time) (DaySumm
 	out.RemainingCarbs = round1(math.Max(0, nutritionProfile.CarbTarget-out.ConsumedCarbs))
 	workouts, _ := s.store.ListWorkouts(ctx, userID, 200)
 	for _, w := range workouts {
-		if w.Workout.Status == "completed" && w.Workout.CompletedAt != nil && w.Workout.CompletedAt.UTC().Format("2006-01-02") == date {
+		if w.Workout.Status == "completed" && w.Workout.CompletedAt != nil && w.Workout.CompletedAt.In(loc).Format("2006-01-02") == date {
 			out.CompletedWorkouts++
 		}
 	}
@@ -205,6 +230,14 @@ func (s *Service) Day(ctx context.Context, userID string, at time.Time) (DaySumm
 }
 
 func (s *Service) History(ctx context.Context, userID string, days int, now time.Time) ([]HistoryItem, error) {
+	return s.HistoryInLocation(ctx, userID, days, now, time.UTC)
+}
+
+// HistoryInLocation groups UTC instants by the client's local day, through daylight-saving shifts.
+func (s *Service) HistoryInLocation(ctx context.Context, userID string, days int, now time.Time, loc *time.Location) ([]HistoryItem, error) {
+	if loc == nil {
+		loc = time.UTC
+	}
 	if days <= 0 {
 		days = 7
 	}
@@ -215,10 +248,11 @@ func (s *Service) History(ctx context.Context, userID string, days int, now time
 	if err != nil {
 		return nil, err
 	}
-	lastDate := now.UTC().Format("2006-01-02")
-	lastDay, _ := time.Parse("2006-01-02", lastDate)
+	localNow := now.In(loc)
+	lastDay := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
 	firstDay := lastDay.AddDate(0, 0, -(days - 1))
-	entries, err := s.store.ListFoodEntries(ctx, userID, firstDay, lastDay.Add(24*time.Hour-time.Nanosecond))
+	// The extra next-midnight entry is omitted by the byDate membership check below.
+	entries, err := s.store.ListFoodEntries(ctx, userID, firstDay, lastDay.AddDate(0, 0, 1))
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +269,7 @@ func (s *Service) History(ctx context.Context, userID string, days int, now time
 		byDate[date] = &out[len(out)-1]
 	}
 	for _, entry := range entries {
-		date := entry.LoggedAt.UTC().Format("2006-01-02")
+		date := entry.LoggedAt.In(loc).Format("2006-01-02")
 		item := byDate[date]
 		if item == nil {
 			continue
@@ -249,7 +283,7 @@ func (s *Service) History(ctx context.Context, userID string, days int, now time
 		if workout.Workout.Status != "completed" || workout.Workout.CompletedAt == nil {
 			continue
 		}
-		date := workout.Workout.CompletedAt.UTC().Format("2006-01-02")
+		date := workout.Workout.CompletedAt.In(loc).Format("2006-01-02")
 		if item := byDate[date]; item != nil {
 			item.TrainingDay = true
 		}
