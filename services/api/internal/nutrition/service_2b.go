@@ -2,6 +2,9 @@ package nutrition
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -30,6 +33,11 @@ type RecipeItemInput struct {
 type RecipeInput struct {
 	Name  string            `json:"name"`
 	Items []RecipeItemInput `json:"items"`
+}
+
+type FoodBatchItem struct {
+	FoodID string `json:"food_id"`
+	QuantityG float64 `json:"quantity_g"`
 }
 
 type NutritionTrainingCorrelation struct {
@@ -121,37 +129,73 @@ func (s *Service) ListRecipes(ctx context.Context, userID string) ([]store.Recip
 	return s.store.ListRecipes(ctx, userID)
 }
 
-func (s *Service) LogRecipe(ctx context.Context, userID, recipeID, mealType string, scale float64, loggedAt *time.Time) (DaySummary, error) {
+func (s *Service) LogRecipe(ctx context.Context, userID, recipeID, mealType string, scale float64, loggedAt *time.Time, operationKeys ...string) (DaySummary, error) {
+	key:=""
+	if len(operationKeys)>0 {key=operationKeys[0]}
+	return s.LogRecipeInLocation(ctx,userID,recipeID,mealType,scale,loggedAt,key,time.UTC)
+}
+
+func (s *Service) LogRecipeInLocation(ctx context.Context, userID, recipeID, mealType string, scale float64, loggedAt *time.Time, operationKey string, loc *time.Location) (DaySummary, error) {
 	if !validMeal(mealType) {
 		return DaySummary{}, errors.New("unsupported meal_type")
 	}
 	if scale <= 0 {
 		scale = 1
 	}
-	if scale > 10 {
+	if math.IsNaN(scale) || math.IsInf(scale, 0) || scale > 10 {
 		return DaySummary{}, errors.New("scale must be <= 10")
 	}
 	recipe, err := s.store.GetRecipe(ctx, userID, recipeID)
 	if err != nil {
 		return DaySummary{}, err
 	}
-	when := time.Now().UTC()
-	if loggedAt != nil {
-		when = loggedAt.UTC()
-	}
+	items := make([]FoodBatchItem,0,len(recipe.Items))
 	for _, item := range recipe.Items {
-		food, err := s.store.GetFoodItem(ctx, userID, item.FoodID)
-		if err != nil {
-			return DaySummary{}, err
-		}
-		q := round1(item.QuantityG * scale)
-		factor := q / 100
-		_, err = s.store.CreateFoodEntry(ctx, store.FoodEntry{UserID: userID, FoodID: food.ID, FoodName: recipe.Name + " · " + food.Name, MealType: mealType, LoggedAt: when, QuantityG: q, Calories: round1(food.Kcal100 * factor), Protein: round1(food.Protein100 * factor), Fat: round1(food.Fat100 * factor), Carbs: round1(food.Carbs100 * factor), Fiber: round1(food.Fiber100 * factor)})
-		if err != nil {
-			return DaySummary{}, err
-		}
+		items=append(items,FoodBatchItem{FoodID:item.FoodID,QuantityG:round1(item.QuantityG*scale)})
 	}
-	return s.Day(ctx, userID, when)
+	return s.LogFoodBatchInLocation(ctx,userID,mealType,items,loggedAt,operationKey,"recipe:"+recipeID,recipe.Name+" · ",loc)
+}
+
+// LogFoodBatch prevalidates the entire meal and delegates the all-or-nothing
+// write and deduplication to the selected store. Source scopes a key across
+// recipe and AI endpoints; separate user actions must use separate keys.
+func (s *Service) LogFoodBatch(ctx context.Context,userID,mealType string,items []FoodBatchItem,loggedAt *time.Time,operationKey,source,namePrefix string) (DaySummary,error) {
+	return s.LogFoodBatchInLocation(ctx,userID,mealType,items,loggedAt,operationKey,source,namePrefix,time.UTC)
+}
+
+func (s *Service) LogFoodBatchInLocation(ctx context.Context,userID,mealType string,items []FoodBatchItem,loggedAt *time.Time,operationKey,source,namePrefix string,loc *time.Location) (DaySummary,error) {
+	if !validMeal(mealType) {return DaySummary{},errors.New("unsupported meal_type")}
+	if len(items)==0 || len(items)>30 {return DaySummary{},errors.New("items must contain 1-30 foods")}
+	if err:=validateFoodOperationKey(operationKey);err!=nil {return DaySummary{},err}
+	when:=time.Now().UTC()
+	var requestedAt *time.Time
+	if loggedAt!=nil {utc:=loggedAt.UTC();when=utc;requestedAt=&utc}
+	maxQuantityG:=5000.0
+	if strings.HasPrefix(source,"recipe:") {maxQuantityG=50000}
+	prepared:=make([]store.FoodEntry,0,len(items))
+	for _,item:=range items {
+		if strings.TrimSpace(item.FoodID)=="" || math.IsNaN(item.QuantityG) || math.IsInf(item.QuantityG,0) || item.QuantityG<=0 || item.QuantityG>maxQuantityG {return DaySummary{},errors.New("food_id and a supported positive quantity_g are required")}
+		food,err:=s.store.GetFoodItem(ctx,userID,item.FoodID)
+		if err!=nil {return DaySummary{},err}
+		q:=round1(item.QuantityG)
+		if q<=0 {return DaySummary{},errors.New("quantity_g is too small")}
+		factor:=q/100
+		prepared=append(prepared,store.FoodEntry{UserID:userID,FoodID:food.ID,FoodName:namePrefix+food.Name,MealType:mealType,LoggedAt:when,QuantityG:q,Calories:round1(food.Kcal100*factor),Protein:round1(food.Protein100*factor),Fat:round1(food.Fat100*factor),Carbs:round1(food.Carbs100*factor),Fiber:round1(food.Fiber100*factor)})
+	}
+	fingerprint:=struct{Source string;MealType string;Items []FoodBatchItem;LoggedAt *time.Time}{source,mealType,items,requestedAt}
+	encoded,err:=json.Marshal(fingerprint)
+	if err!=nil {return DaySummary{},err}
+	digest:=sha256.Sum256(encoded)
+	savedAt,err:=s.store.CreateFoodEntries(ctx,userID,operationKey,hex.EncodeToString(digest[:]),prepared)
+	if err!=nil {return DaySummary{},err}
+	return s.DayInLocation(ctx,userID,savedAt,loc)
+}
+
+func validateFoodOperationKey(key string) error {
+	if key=="" {return nil} // Legacy callers still receive atomic batches.
+	if len(key)<8 || len(key)>128 {return errors.New("idempotency_key must be 8-128 ASCII letters, numbers, '-' or '_'")}
+	for _,c:=range key {if !((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='-'||c=='_') {return errors.New("idempotency_key must be 8-128 ASCII letters, numbers, '-' or '_'")}}
+	return nil
 }
 
 func (s *Service) Correlation(ctx context.Context, userID string, days int, now time.Time) (NutritionTrainingCorrelation, error) {

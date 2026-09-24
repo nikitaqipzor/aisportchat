@@ -6,6 +6,21 @@ export function currentLocalDate() {
   return `${y}-${m}-${day}`;
 }
 
+// IANA zone names let the API calculate calendar-day boundaries across DST changes.
+// Older runtimes without Intl keep the API's UTC default rather than sending a guess.
+export function localTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
+}
+
+// null means keep the date selected by the user, including an explicitly opened archive.
+export function nextNutritionDateOnRollover(previousToday: string, today: string, selectedDate: string, followsToday: boolean): string | null {
+  return followsToday && today !== previousToday && selectedDate === previousToday ? today : null;
+}
+
 export function localDateOffset(days: number) {
   const d = new Date();
   d.setHours(12, 0, 0, 0);

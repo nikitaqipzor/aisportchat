@@ -1,10 +1,11 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, HealthDailySnapshot, HealthInsights} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {currentLocalDate} from '../domain/date';
 import {healthConnect, HealthConnectStatus} from '../native/healthConnect';
 import {flushPassiveHealthSnapshots, syncHealthDays} from '../health/sync';
+import {formatHealthDate, healthConnectionState, selectHealthSnapshot} from '../health/status';
 import {colors, control, radius, spacing} from '../theme/tokens';
 import {sessionStorage} from '../storage/session';
 
@@ -33,31 +34,42 @@ export function ConnectedDevicesScreen({accessToken,onBack,origin='home'}:{acces
   const [message,setMessage]=useState('');
   const [messageTone,setMessageTone]=useState<'success'|'error'|'info'>('info');
   const [syncProgress,setSyncProgress]=useState('');
+  const loadRequest=useRef(0);
+  const syncing=useRef(false);
 
   const load=useCallback(async()=>{
+    const request=++loadRequest.current;
+    const day=currentLocalDate();
     setInitialLoading(true);
     setLoadError('');
     try {
       const nativeStatus=await healthConnect.status();
+      if(request!==loadRequest.current)return;
       setStatus(nativeStatus);
-      const [server,analysis]=await Promise.allSettled([
-        api.healthToday(accessToken,currentLocalDate()),
-        api.healthInsights(accessToken,currentLocalDate()),
+      const [server,analysis,history]=await Promise.allSettled([
+        api.healthToday(accessToken,day),
+        api.healthInsights(accessToken,day),
+        api.healthHistory(accessToken,14),
       ]);
-      setSnapshot(server.status==='fulfilled'?(server.value??null):null);
-      setInsights(analysis.status==='fulfilled'?analysis.value:null);
+      if(request!==loadRequest.current)return;
+      const daySnapshot=server.status==='fulfilled'?server.value:null;
+      const previous=history.status==='fulfilled'?history.value.items:[];
+      setSnapshot(selectHealthSnapshot(day,daySnapshot,...previous));
+      setInsights(analysis.status==='fulfilled'&&analysis.value.date===day?analysis.value:null);
       if(server.status==='rejected'||analysis.status==='rejected'){
-        setLoadError('Health Connect доступен, но данные сервера загрузились не полностью. Можно повторить проверку.');
+        setLoadError('Данные сервера загрузились не полностью. Можно повторить проверку.');
       }
     } catch(e) {
-      setLoadError(e instanceof Error?e.message:'Не удалось проверить Health Connect.');
+      if(request!==loadRequest.current)return;
+      setStatus(null);
+      setLoadError(healthError(e,'Не удалось проверить Health Connect.'));
     } finally {
-      setInitialLoading(false);
+      if(request===loadRequest.current)setInitialLoading(false);
     }
   },[accessToken]);
-  useEffect(()=>{void load()},[load]);
+  useEffect(()=>{void load();return()=>{loadRequest.current++}},[load]);
   useEffect(()=>{
-    const subscription=AppState.addEventListener('change',next=>{if(next==='active')void load()});
+    const subscription=AppState.addEventListener('change',next=>{if(next==='active'&&!syncing.current)void load()});
     return ()=>subscription.remove();
   },[load]);
 
@@ -74,16 +86,25 @@ export function ConnectedDevicesScreen({accessToken,onBack,origin='home'}:{acces
     catch(e){setMessageTone('error');setMessage(e instanceof Error?e.message:'Не удалось изменить пассивную синхронизацию.')}finally{setBusy(false);setBusyLabel('')}
   }
   async function sync(days:number){
+    syncing.current=true;
+    loadRequest.current++;
     try {
       setBusy(true); setBusyLabel('Читаю Health Connect…'); setMessage(''); setSyncProgress('');
+      const before=await healthConnect.status();
+      setStatus(before);
+      if(!before.permissions_granted)throw new Error('Разрешения Health Connect отозваны. Открой настройки и разреши чтение данных.');
+      const day=currentLocalDate();
       const drained=await flushPassiveHealthSnapshots(accessToken);
       const result=await syncHealthDays(accessToken,days,(processed,total)=>setSyncProgress(`${processed}/${total} дней`));
-      const [analysis,today,nativeStatus]=await Promise.all([api.healthInsights(accessToken,currentLocalDate()),api.healthToday(accessToken,currentLocalDate()).catch(()=>undefined),healthConnect.status()]);
-      setStatus(nativeStatus); setSnapshot(today??result.latest??drained.latest??null); setInsights(analysis);
+      const [analysis,today,nativeStatus]=await Promise.all([api.healthInsights(accessToken,day),api.healthToday(accessToken,day).catch(()=>undefined),healthConnect.status()]);
+      setStatus(nativeStatus);
+      setSnapshot(selectHealthSnapshot(day,today,result.latest,drained.latest,snapshot));
+      setInsights(analysis.date===day?analysis:null);
+      if(!nativeStatus.permissions_granted)throw new Error('Разрешения Health Connect отозваны во время синхронизации. Открой настройки и разреши чтение данных.');
       const imported=result.imported+drained.imported;
       if(imported===0){setMessageTone('info');setMessage(`Health Connect проверен: за ${result.processed} дн. нет данных. Открой Mi Fitness, дождись его синхронизации с часами и проверь доступ Mi Fitness в Health Connect.`)}
       else{setMessageTone('success');setMessage(`Готово: импортировано ${imported} дн. с данными${result.empty?` · без записей: ${result.empty}`:''}. Recovery пересчитан · ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}.`)}
-    } catch(e){setMessageTone('error');setMessage(healthError(e,'Синхронизация не удалась.'))} finally{setBusy(false);setBusyLabel('');setSyncProgress('')}
+    } catch(e){const refreshed=await healthConnect.status().catch(()=>null);setStatus(refreshed);setMessageTone('error');setMessage(healthError(e,'Синхронизация не удалась.'))} finally{syncing.current=false;setBusy(false);setBusyLabel('');setSyncProgress('')}
   }
 
   async function openSettings(){
@@ -91,10 +112,11 @@ export function ConnectedDevicesScreen({accessToken,onBack,origin='home'}:{acces
     catch(e){setMessageTone('error');setMessage(healthError(e,'Не удалось открыть Health Connect.'))}finally{setBusy(false);setBusyLabel('')}
   }
 
-  const available=status?.sdk_status==='available'; const granted=status?.permissions_granted===true;
+  const todayDate=currentLocalDate();
+  const connection=healthConnectionState(status,snapshot,todayDate);
+  const {available,granted,isToday:snapshotIsToday,step:connectionStep}=connection;
   const b28=insights?.baseline_28d;
   const miFitnessState=!status?'Статус Mi Fitness пока неизвестен':status.mi_fitness_installed?'Mi Fitness найден на телефоне':'Mi Fitness не найден';
-  const connectionStep=!status?.mi_fitness_installed?1:!available?2:!granted?3:!snapshot?4:5;
   return <ScrollView testID="connected-devices-screen" contentContainerStyle={styles.container} showsVerticalScrollIndicator={false}>
     <Pressable
       onPress={onBack}
@@ -110,12 +132,13 @@ export function ConnectedDevicesScreen({accessToken,onBack,origin='home'}:{acces
     <Text style={styles.intro}>Текущая версия импортирует активность и сон из Mi Fitness через Health Connect. Модель Xiaomi-часов Android не сообщает, поэтому она может отображаться как неизвестная.</Text>
 
     <View style={styles.connectionCard} testID="health-connection-progress">
-      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.connectionEyebrow}>ПОДКЛЮЧЕНИЕ MI FITNESS</Text><Text style={styles.connectionTitle}>{connectionStep===5?'Данные Mi Fitness получены':`Шаг ${connectionStep} из 4`}</Text></View><Text style={[styles.connectionBadge,connectionStep===5&&styles.connectionBadgeReady]}>{connectionStep===5?'ГОТОВО':'НАСТРОЙКА'}</Text></View>
+      <View style={styles.rowBetween}><View style={styles.flex}><Text style={styles.connectionEyebrow}>ПОДКЛЮЧЕНИЕ MI FITNESS</Text><Text style={styles.connectionTitle}>{connection.title}</Text></View><Text style={[styles.connectionBadge,connectionStep===5&&snapshotIsToday&&styles.connectionBadgeReady]}>{connection.badge}</Text></View>
       <ConnectionStep number={1} title="Mi Fitness" detail={status?.mi_fitness_installed?'Mi Fitness найден. Модель часов не определяется':'Установите Mi Fitness и синхронизируйте с ним Xiaomi-часы'} done={connectionStep>1}/>
       <ConnectionStep number={2} title="Health Connect" detail={available?'Доступен':'Установите или обновите Health Connect'} done={connectionStep>2}/>
       <ConnectionStep number={3} title="Разрешения" detail={granted?'Доступ выдан':'Разрешите чтение выбранных показателей'} done={connectionStep>3}/>
-      <ConnectionStep number={4} title="Первая синхронизация" detail={snapshot?'Данные получены':'Синхронизируйте данные за сегодня'} done={connectionStep>4}/>
+      <ConnectionStep number={4} title="Первая синхронизация" detail={connection.syncDetail} done={connectionStep>4}/>
     </View>
+    {!granted&&snapshot?<Text accessibilityRole="alert" style={styles.message}>Ранее сохранённые данные доступны, но сейчас чтение Health Connect отключено. Проверь разрешения и повтори синхронизацию.</Text>:null}
 
     {initialLoading?<View accessibilityLiveRegion="polite" style={styles.loadingCard}><ActivityIndicator color={colors.text}/><Text style={styles.meta}>Проверяем устройство и данные…</Text></View>:null}
     {loadError?<View style={styles.errorCard}><Text accessibilityRole="alert" style={styles.errorText}>{loadError}</Text><AppButton label="Повторить проверку" variant="secondary" disabled={initialLoading||busy} loading={initialLoading} onPress={()=>void load()} testID="health-retry-load"/></View>:null}
@@ -149,20 +172,20 @@ export function ConnectedDevicesScreen({accessToken,onBack,origin='home'}:{acces
     </View>:null}
 
     {granted?<View style={styles.actions} accessibilityLabel="Действия синхронизации">
-      <AppButton label="Синхронизировать сегодня" onPress={()=>void sync(1)} disabled={busy} testID="health-sync-today"/>
-      <AppButton label="Синхронизировать 7 дней" variant="secondary" onPress={()=>void sync(7)} disabled={busy} testID="health-sync-week"/>
-      <AppButton label="Рассчитать норму за 28 дней" variant="secondary" onPress={()=>void sync(28)} disabled={busy} testID="health-sync-baseline"/>
+      <AppButton label="Синхронизировать сегодня" onPress={()=>void sync(1)} disabled={busy||initialLoading} testID="health-sync-today"/>
+      <AppButton label="Синхронизировать 7 дней" variant="secondary" onPress={()=>void sync(7)} disabled={busy||initialLoading} testID="health-sync-week"/>
+      <AppButton label="Рассчитать норму за 28 дней" variant="secondary" onPress={()=>void sync(28)} disabled={busy||initialLoading} testID="health-sync-baseline"/>
     </View>:null}
     {busy?<View accessibilityLiveRegion="polite" style={styles.loading}><ActivityIndicator color={colors.text}/><Text style={styles.meta}>{busyLabel} {syncProgress}</Text></View>:null}
     {message?<Text accessibilityRole={messageTone==='error'?'alert':'text'} accessibilityLiveRegion={messageTone==='error'?'assertive':'polite'} style={[styles.message,messageTone==='error'&&styles.messageError,messageTone==='success'&&styles.messageSuccess]}>{message}</Text>:null}
 
     {granted&&!initialLoading&&!snapshot&&!insights?<View style={styles.emptyCard}><Text style={styles.emptyTitle}>Данных пока нет</Text><Text style={styles.meta}>Запусти синхронизацию за сегодня или 7 дней. Если показатели не появятся, проверь разрешения Health Connect и синхронизацию Mi Fitness.</Text></View>:null}
 
-    {insights?<View style={styles.card}><View style={styles.rowBetween}><View style={styles.flex}><Text accessibilityRole="header" style={styles.section}>Качество данных</Text><Text style={styles.meta}>{freshnessLabel(insights.freshness.status)}</Text></View><View accessible accessibilityLabel={`Надёжность данных ${insights.confidence_percent} процентов, ${confidenceLabel(insights.confidence)}`} style={styles.confidencePill}><Text accessible={false} style={styles.confidenceValue}>{insights.confidence_percent}%</Text><Text accessible={false} style={styles.confidenceLabel}>{confidenceLabel(insights.confidence)}</Text></View></View><View style={styles.grid}><Metric label="Дней с данными" value={`${b28?.available_days??0}/28`}/><Metric label="Покрытие" value={`${b28?.coverage_percent??0}%`}/><Metric label="Синхронизация" value={insights.freshness.status==='missing'?'—':`${Math.max(0,Math.round(insights.freshness.sync_age_minutes/60))} ч назад`}/><Metric label="Источник" value={snapshot?.source_label??'—'}/></View>{insights.reasons.map((reason,i)=><Text key={i} style={styles.reason}>• {reason}</Text>)}</View>:null}
+    {insights?<View style={styles.card}><View style={styles.rowBetween}><View style={styles.flex}><Text accessibilityRole="header" style={styles.section}>Качество данных за сегодня</Text><Text style={styles.meta}>{freshnessLabel(insights.freshness.status)}</Text></View><View accessible accessibilityLabel={`Надёжность данных ${insights.confidence_percent} процентов, ${confidenceLabel(insights.confidence)}`} style={styles.confidencePill}><Text accessible={false} style={styles.confidenceValue}>{insights.confidence_percent}%</Text><Text accessible={false} style={styles.confidenceLabel}>{confidenceLabel(insights.confidence)}</Text></View></View><View style={styles.grid}><Metric label="Дней с данными" value={`${b28?.available_days??0}/28`}/><Metric label="Покрытие" value={`${b28?.coverage_percent??0}%`}/><Metric label="Синхронизация" value={insights.freshness.status==='missing'?'—':`${Math.max(0,Math.round(insights.freshness.sync_age_minutes/60))} ч назад`}/><Metric label="Источник" value={snapshotIsToday?snapshot?.source_label??'—':'—'}/></View>{insights.reasons.map((reason,i)=><Text key={i} style={styles.reason}>• {reason}</Text>)}</View>:null}
 
     {b28?<View style={styles.card}><Text accessibilityRole="header" style={styles.section}>Твоя норма · 28 дней</Text><Text style={styles.meta}>Это персональная база активности по предыдущим дням. Сегодняшний день в среднее не входит.</Text><View style={styles.grid}><Metric label="Сон" value={sleepLabel(b28.sleep_minutes?.average)}/><Metric label="Шаги" value={metric(b28.steps?.average,'')}/><Metric label="Активные ккал" value={metric(b28.active_calories_kcal?.average,'')}/><Metric label="Тренировки" value={metric(b28.exercise_minutes?.average,' мин/д')}/></View></View>:null}
 
-    {snapshot?<View style={styles.card}><Text accessibilityRole="header" style={styles.section}>Сегодня</Text><Text style={styles.source}>{snapshot.source_label}</Text><View style={styles.grid}><Metric label="Шаги" value={metric(snapshot.steps,'')}/><Metric label="Относительно нормы" value={signedPercent(insights?.deviations.steps?.delta_percent)}/><Metric label="Дистанция" value={metric(snapshot.distance_m/1000,' км')}/><Metric label="Активные ккал" value={metric(snapshot.active_calories_kcal,'')}/><Metric label="Сон" value={sleepLabel(snapshot.sleep_minutes)}/><Metric label="Сон относительно нормы" value={signedPercent(insights?.deviations.sleep_minutes?.delta_percent)}/><Metric label="Глубокий сон" value={sleepLabel(snapshot.deep_sleep_minutes)}/><Metric label="REM-сон" value={sleepLabel(snapshot.rem_sleep_minutes)}/><Metric label="Тренировки" value={`${snapshot.exercise_sessions} · ${snapshot.exercise_minutes} мин`}/><Metric label="Пульс тренировки" value={snapshot.exercise_heart_rate_avg?`${Math.round(snapshot.exercise_heart_rate_avg)} ср. / ${Math.round(snapshot.exercise_heart_rate_max??0)} макс.`:'—'}/></View></View>:null}
+    {snapshot?<View style={styles.card}><Text accessibilityRole="header" style={styles.section}>{snapshotIsToday?`Сегодня · ${formatHealthDate(snapshot.date)}`:`Данные за ${formatHealthDate(snapshot.date)}`}</Text>{!snapshotIsToday?<Text style={styles.meta}>За сегодня данных пока нет. Ниже показана последняя сохранённая запись.</Text>:null}<Text style={styles.source}>{snapshot.source_label}</Text><View style={styles.grid}><Metric label="Шаги" value={metric(snapshot.steps,'')}/>{snapshotIsToday?<Metric label="Относительно нормы" value={signedPercent(insights?.deviations.steps?.delta_percent)}/>:null}<Metric label="Дистанция" value={metric(snapshot.distance_m/1000,' км')}/><Metric label="Активные ккал" value={metric(snapshot.active_calories_kcal,'')}/><Metric label="Сон" value={sleepLabel(snapshot.sleep_minutes)}/>{snapshotIsToday?<Metric label="Сон относительно нормы" value={signedPercent(insights?.deviations.sleep_minutes?.delta_percent)}/>:null}<Metric label="Глубокий сон" value={sleepLabel(snapshot.deep_sleep_minutes)}/><Metric label="REM-сон" value={sleepLabel(snapshot.rem_sleep_minutes)}/><Metric label="Тренировки" value={`${snapshot.exercise_sessions} · ${snapshot.exercise_minutes} мин`}/><Metric label="Пульс тренировки" value={snapshot.exercise_heart_rate_avg?`${Math.round(snapshot.exercise_heart_rate_avg)} ср. / ${Math.round(snapshot.exercise_heart_rate_max??0)} макс.`:'—'}/></View></View>:null}
 
     {insights?<View style={styles.card}><Text accessibilityRole="header" style={styles.section}>Происхождение данных</Text>{insights.conflict_resolved?<View style={styles.conflictBox}><Text style={styles.conflictTitle}>Найдено несколько источников</Text><Text style={styles.meta}>Сервер сохранил источники раздельно и выбрал приоритетный, чтобы данные не перезаписывали друг друга.</Text></View>:null}{insights.sources.map(source=><View key={source.source_package} accessible accessibilityLabel={`${source.source_label||source.source_package}. ${source.selected?'Выбранный источник':'Резервный источник'}. ${source.data_types.join(', ')||'Нет доступных метрик'}`} style={styles.sourceRow}><View accessible={false} style={styles.flex}><Text style={styles.provenanceMetric}>{source.source_label||source.source_package}</Text><Text style={styles.meta}>{source.data_types.join(' · ')||'нет доступных метрик'}</Text></View><Text accessible={false} style={[styles.sourceBadge,source.selected&&styles.sourceBadgeSelected]}>{source.selected?'ВЫБРАН':'РЕЗЕРВ'}</Text></View>)}{insights.provenance.map(item=><View key={item.metric} accessible accessibilityLabel={`${provenanceName(item.metric)}: ${item.available?item.source_label??item.source_package:'Нет записи'}`} style={styles.provenanceRow}><Text accessible={false} style={styles.provenanceMetric}>{provenanceName(item.metric)}</Text><Text accessible={false} style={[styles.provenanceState,!item.available&&styles.muted]}>{item.available?item.source_label??item.source_package:'Нет записи'}</Text></View>)}</View>:null}
     <View style={styles.info}><Text style={styles.infoText}>Мы читаем только разрешённые данные Health Connect. Персональная норма — fitness-тренд, а не медицинская диагностика. Если синхронизация устарела, Recovery Engine не должен слепо доверять старому сну.</Text></View>

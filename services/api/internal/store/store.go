@@ -11,6 +11,7 @@ var (
 	ErrEmailExists  = errors.New("email already exists")
 	ErrInvalidState = errors.New("invalid state")
 	ErrForbidden    = errors.New("forbidden")
+	ErrIdempotencyConflict = errors.New("idempotency key was already used for another request")
 )
 
 type User struct {
@@ -367,6 +368,9 @@ type Store interface {
 	FindFoodByBarcode(ctx context.Context, userID, barcode string) (FoodItem, error)
 	CreateCustomFood(ctx context.Context, userID string, food FoodItem) (FoodItem, error)
 	CreateFoodEntry(ctx context.Context, entry FoodEntry) (FoodEntry, error)
+	// CreateFoodEntries saves an entire meal atomically. A nonempty operationKey
+	// deduplicates retries for one user and rejects a different payloadHash.
+	CreateFoodEntries(ctx context.Context, userID, operationKey, payloadHash string, entries []FoodEntry) (time.Time, error)
 	ListFoodEntries(ctx context.Context, userID string, from, to time.Time) ([]FoodEntry, error)
 	DeleteFoodEntry(ctx context.Context, userID, entryID string) error
 	CreateRecipe(ctx context.Context, recipe Recipe) (Recipe, error)

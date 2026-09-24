@@ -139,22 +139,24 @@ func (s *Service) resolveFoodDraft(ctx context.Context, userID, source, text str
 	return out, nil
 }
 
-func (s *Service) ConfirmFood(ctx context.Context, userID, mealType string, items []ConfirmFoodItem, loggedAt *time.Time) (nutrition.DaySummary, error) {
+func (s *Service) ConfirmFood(ctx context.Context, userID, mealType string, items []ConfirmFoodItem, loggedAt *time.Time, operationKeys ...string) (nutrition.DaySummary, error) {
+	key:=""
+	if len(operationKeys)>0 {key=operationKeys[0]}
+	return s.ConfirmFoodInLocation(ctx,userID,mealType,items,loggedAt,key,time.UTC)
+}
+
+func (s *Service) ConfirmFoodInLocation(ctx context.Context, userID, mealType string, items []ConfirmFoodItem, loggedAt *time.Time, operationKey string, loc *time.Location) (nutrition.DaySummary, error) {
 	if len(items) == 0 || len(items) > 20 {
 		return nutrition.DaySummary{}, errors.New("items must contain 1-20 foods")
 	}
-	var out nutrition.DaySummary
+	batch:=make([]nutrition.FoodBatchItem,0,len(items))
 	for _, item := range items {
-		if strings.TrimSpace(item.FoodID) == "" || item.QuantityG <= 0 {
+		if strings.TrimSpace(item.FoodID) == "" || item.QuantityG <= 0 || math.IsNaN(item.QuantityG) || math.IsInf(item.QuantityG,0) {
 			return nutrition.DaySummary{}, errors.New("food_id and positive quantity_g are required")
 		}
-		var err error
-		out, err = s.nutrition.LogFood(ctx, userID, item.FoodID, mealType, item.QuantityG, loggedAt)
-		if err != nil {
-			return nutrition.DaySummary{}, err
-		}
+		batch=append(batch,nutrition.FoodBatchItem{FoodID:item.FoodID,QuantityG:item.QuantityG})
 	}
-	return out, nil
+	return s.nutrition.LogFoodBatchInLocation(ctx,userID,mealType,batch,loggedAt,operationKey,"ai_confirm","",loc)
 }
 
 func (s *Service) Context(ctx context.Context, userID string) (FitnessContext, error) {

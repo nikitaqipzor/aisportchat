@@ -25,6 +25,9 @@ type Postgres struct {
 	mu   sync.Mutex
 	conn *C.PGconn
 	dsn  string
+	// Protected by mu. Never reconnect inside a transaction: a new session
+	// would silently commit subsequent statements outside the original BEGIN.
+	inTx bool
 }
 
 type pgErr struct {
@@ -87,7 +90,12 @@ func (p *Postgres) queryLocked(ctx context.Context, sql string, params ...*strin
 	if p.conn == nil {
 		return nil, errors.New("postgres connection is closed")
 	}
-	if C.PQstatus(p.conn) != C.CONNECTION_OK {
+	if p.inTx {
+		status := C.PQtransactionStatus(p.conn)
+		if C.PQstatus(p.conn) != C.CONNECTION_OK || (status != C.PQTRANS_INTRANS && status != C.PQTRANS_INERROR) {
+			return nil, errors.New("postgres transaction connection was lost")
+		}
+	} else if C.PQstatus(p.conn) != C.CONNECTION_OK {
 		C.PQreset(p.conn)
 		if C.PQstatus(p.conn) != C.CONNECTION_OK {
 			return nil, fmt.Errorf("postgres reconnect: %s", strings.TrimSpace(C.GoString(C.PQerrorMessage(p.conn))))
@@ -152,11 +160,13 @@ func (p *Postgres) withTx(ctx context.Context, fn func() error) error {
 	if _, err := p.queryLocked(ctx, "BEGIN"); err != nil {
 		return err
 	}
+	p.inTx = true
 	committed := false
 	defer func() {
 		if !committed {
 			_, _ = p.queryLocked(context.Background(), "ROLLBACK")
 		}
+		p.inTx = false
 	}()
 	if err := fn(); err != nil {
 		return err

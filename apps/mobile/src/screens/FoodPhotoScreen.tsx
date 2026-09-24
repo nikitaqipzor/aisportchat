@@ -5,6 +5,8 @@ import {AIFoodDraftView} from '../components/AIFoodDraftView';
 import {foodPhotoErrorMessage, foodPhotoPicker, isFoodPhotoPickCancelled} from '../native/foodPhoto';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
+import {withFoodIdempotency} from '../domain/foodIdempotency';
+import {localTimeZone} from '../domain/date';
 
 export function FoodPhotoScreen({accessToken,onBack,onDone}:{accessToken:string;onBack:()=>void;onDone:()=>void}) {
   const [draft,setDraft]=useState<AIFoodDraft|null>(null);
@@ -39,10 +41,11 @@ export function FoodPhotoScreen({accessToken,onBack,onDone}:{accessToken:string;
   }
 
   async function confirm(meal:FoodEntry['meal_type'],items:Array<{food_id:string;quantity_g:number}>) {
+    if (busy) return;
     try {
       setBusy(true);
       setError('');
-      await api.aiConfirmFood(accessToken,meal,items);
+      await withFoodIdempotency('ai-photo',JSON.stringify({meal,items}),key=>api.aiConfirmFood(accessToken,meal,items,key,localTimeZone()));
       setSelectedImage('');
       onDone();
     } catch (cause) {

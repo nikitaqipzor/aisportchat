@@ -782,6 +782,12 @@ paths:
         schema:
           type: string
           format: date
+      - in: query
+        name: time_zone
+        description: IANA time zone for date boundaries and workout markers. Defaults to UTC.
+        schema:
+          type: string
+          example: Europe/Moscow
       responses:
         '200':
           description: Daily calorie and macro balance with food entries and training-day
@@ -803,6 +809,12 @@ paths:
           minimum: 1
           maximum: 90
           default: 7
+      - in: query
+        name: time_zone
+        description: IANA time zone used to group entries into calendar days. Defaults to UTC.
+        schema:
+          type: string
+          example: Europe/Moscow
       responses:
         '200':
           description: Daily nutrition summaries
@@ -840,6 +852,13 @@ paths:
       operationId: logFoodEntry
       security:
       - bearerAuth: []
+      parameters:
+      - in: query
+        name: time_zone
+        description: IANA time zone for the returned daily summary. Defaults to UTC.
+        schema:
+          type: string
+          example: Europe/Moscow
       requestBody:
         required: true
         content:
@@ -939,6 +958,7 @@ paths:
   /nutrition/recipes/{recipe_id}/log:
     post:
       operationId: logRecipe
+      description: Logs every recipe item atomically. Send a stable idempotency_key on retries to prevent duplicate meals.
       security:
       - bearerAuth: []
       parameters:
@@ -948,9 +968,41 @@ paths:
         schema:
           type: string
           format: uuid
+      - in: query
+        name: time_zone
+        description: IANA time zone for the returned daily summary. Defaults to UTC.
+        schema:
+          type: string
+          example: Europe/Moscow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - meal_type
+              properties:
+                meal_type:
+                  type: string
+                  enum: [breakfast, lunch, dinner, snack]
+                scale:
+                  type: number
+                  minimum: 0
+                  maximum: 10
+                logged_at:
+                  type: string
+                  format: date-time
+                idempotency_key:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                  pattern: '^[A-Za-z0-9_-]+$'
       responses:
         '201':
           description: Recipe items logged into the food diary
+        '409':
+          description: Idempotency key was already used for a different request
   /nutrition/correlation:
     get:
       operationId: nutritionTrainingCorrelation
@@ -1081,8 +1133,16 @@ paths:
   /ai/food/confirm:
     post:
       operationId: aiConfirmFood
+      description: Logs every confirmed food atomically. Send a stable idempotency_key on retries to prevent duplicate meals.
       security:
       - bearerAuth: []
+      parameters:
+      - in: query
+        name: time_zone
+        description: IANA time zone for the returned daily summary. Defaults to UTC.
+        schema:
+          type: string
+          example: Europe/Moscow
       requestBody:
         required: true
         content:
@@ -1096,6 +1156,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/NutritionDay'
+        '409':
+          description: Idempotency key was already used for a different request
   /ai/chat:
     post:
       operationId: aiCoach
@@ -2331,6 +2393,11 @@ components:
       - meal_type
       - items
       properties:
+        idempotency_key:
+          type: string
+          minLength: 8
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
         meal_type:
           type: string
           enum:

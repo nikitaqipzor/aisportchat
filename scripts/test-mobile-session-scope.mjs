@@ -20,6 +20,7 @@ module.exports = {
   async getItem(k){ return data.has(k) ? data.get(k) : null; },
   async setItem(k,v){ data.set(k,v); },
   async removeItem(k){ data.delete(k); },
+  async getAllKeys(){ return [...data.keys()]; },
   async multiRemove(keys){ for (const k of keys) data.delete(k); },
 };
 `);
