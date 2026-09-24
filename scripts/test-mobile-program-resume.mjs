@@ -58,7 +58,8 @@ assert.match(app, /onStart=\{next => \{void updateWorkout\(next\); setStep\('act
 assert.match(app, /setPreviewOrigin\('workoutDetail'\)/, 'history preview must return to workout details');
 assert.match(app, /onRepeat=\{next => \{setWorkout\(next\);setSelectedWorkoutId\(next\.workout\.id\)/, 'repeated workout must become the detail target before preview Back');
 assert.match(app, /next\.workout\.status==='active'&&canStart/, 'existing active session resumes in active workout');
-assert.match(detail, /workout\.workout\.status === 'planned' \? <AppButton label="Открыть план и начать"/, 'history planned workout must be actionable');
+assert.match(detail, /workout\.workout\.status === 'planned' && !archivedProgram \? <AppButton label="Открыть план и начать"/, 'only non-archived planned workouts may open the start preview');
+assert.match(detail, /item\.program\.status !== 'active' && item\.sessions\.some\(session => session\.workout_id === workoutId\)/, 'archived linked workout must be recognized in history');
 assert.match(detail, /workout\.workout\.status === 'active' \? <AppButton label="Продолжить тренировку"/, 'history active workout must be resumable');
 assert.match(preview, /\{canStart\?<AppButton label="Начать тренировку"/, 'archived preview must not start');
 assert.match(preview, /onStart\(await api\.startWorkout\(accessToken,current\.workout\.id\)\)/, 'preview must start the existing linked workout ID');

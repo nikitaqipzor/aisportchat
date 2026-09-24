@@ -12,6 +12,7 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
   const [messages,setMessages]=useState<AIChatMessage[]>([]);
   const [input,setInput]=useState('');
   const [status,setStatus]=useState<AIStatus|null>(null);
+  const [statusError,setStatusError]=useState(false);
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
   const [failed,setFailed]=useState<FailedRequest|null>(null);
@@ -19,10 +20,16 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
   const scrollRef=useRef<ScrollViewInstance|null>(null);
 
   useEffect(()=>{
-    api.aiStatus(accessToken).then(setStatus).catch(()=>undefined);
+    void loadStatus();
     sessionStorage.loadAIChat().then(setMessages).catch(()=>undefined);
     return ()=>controllerRef.current?.abort();
   },[accessToken]);
+
+  async function loadStatus() {
+    setStatusError(false);
+    try { setStatus(await api.aiStatus(accessToken)); }
+    catch { setStatusError(true); }
+  }
 
   useEffect(()=>{
     const timer=setTimeout(()=>scrollRef.current?.scrollToEnd({animated:true}),30);
@@ -39,6 +46,7 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
       setMessages(complete);
       await sessionStorage.saveAIChat(complete);
       setStatus({provider:res.provider,model:res.model});
+      setStatusError(false);
     } catch(e) {
       if (controller.signal.aborted) {
         setError('Ответ остановлен. Можно повторить запрос.');
@@ -73,7 +81,7 @@ export function AICoachScreen({accessToken,onBack,onWeekly}:{accessToken:string;
       <Pressable testID="ai-coach-back" accessibilityRole="button" accessibilityLabel="Вернуться на главную" hitSlop={4} onPress={onBack} style={styles.navAction}><Text style={styles.back}>← Главная</Text></Pressable>
       <Pressable testID="ai-coach-weekly-report" accessibilityRole="button" accessibilityLabel="Открыть недельный отчёт" hitSlop={4} onPress={onWeekly} style={styles.navAction}><Text style={styles.report}>Отчёт недели</Text></Pressable>
     </View>
-    <View style={styles.hero}><Text style={styles.kicker}>AI COACH</Text><Text accessibilityRole="header" style={styles.title}>Персональный тренер</Text><Text style={styles.status}>{status?`${status.provider} · ${status.model}`:'Подключение к AI…'}</Text><Text style={styles.disclaimer}>AI может ошибаться. Он объясняет данные приложения, но не заменяет врача и не должен определять нагрузку при боли или ухудшении самочувствия.</Text></View>
+    <View style={styles.hero}><Text style={styles.kicker}>AI COACH</Text><Text accessibilityRole="header" style={styles.title}>Персональный тренер</Text><Text style={styles.status}>{status?`${status.provider} · ${status.model}`:statusError?'Статус AI недоступен':'Подключение к AI…'}</Text>{statusError?<AppButton label="Повторить проверку AI" variant="secondary" onPress={()=>void loadStatus()}/>:null}<Text style={styles.disclaimer}>AI может ошибаться. Он объясняет данные приложения, но не заменяет врача и не должен определять нагрузку при боли или ухудшении самочувствия.</Text></View>
     <ScrollView ref={scrollRef} style={styles.chat} contentContainerStyle={styles.chatInner} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       {messages.length===0?<View style={styles.hint}><Text style={styles.hintTitle}>Можно спросить</Text><Text style={styles.hintText}>Начните с одного из вопросов:</Text><View style={styles.suggestions}>{suggestions.map(item=><Pressable key={item} accessibilityRole="button" onPress={()=>setInput(item)} style={({pressed})=>[styles.suggestion,pressed&&styles.sendPressed]}><Text style={styles.suggestionText}>{item}</Text></Pressable>)}</View></View>:messages.map((m,i)=><View key={`${m.role}-${i}`} accessibilityLabel={`${m.role==='user'?'Вы':'AI Coach'}: ${m.content}`} style={[styles.bubble,m.role==='user'?styles.user:styles.ai]}><Text style={[styles.bubbleText,m.role==='user'&&styles.userText]}>{m.content}</Text></View>)}
       {busy?<View style={styles.busyRow}><Text style={styles.typing}>AI анализирует твои данные…</Text><AppButton label="Остановить" variant="text" testID="ai-coach-stop" onPress={stop}/></View>:null}

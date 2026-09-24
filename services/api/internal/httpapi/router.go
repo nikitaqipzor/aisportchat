@@ -653,6 +653,9 @@ func (s *Server) cancelWorkout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workoutHistory(w http.ResponseWriter, r *http.Request) {
 	filter := workouts.HistoryFilter{Limit: 20}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 { filter.Offset = parsed }
+	}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
 			filter.Limit = parsed
@@ -666,12 +669,12 @@ func (s *Server) workoutHistory(w http.ResponseWriter, r *http.Request) {
 			filter.Favorite = &parsed
 		}
 	}
-	out, err := s.workoutService.History(r.Context(), currentUserID(r.Context()), filter)
+	out, hasMore, err := s.workoutService.HistoryPage(r.Context(), currentUserID(r.Context()), filter)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "has_more": hasMore})
 }
 
 func (s *Server) workoutProgressSummary(w http.ResponseWriter, r *http.Request) {
@@ -959,11 +962,12 @@ func (s *Server) logFoodEntry(w http.ResponseWriter, r *http.Request) {
 		MealType  string     `json:"meal_type"`
 		QuantityG float64    `json:"quantity_g"`
 		LoggedAt  *time.Time `json:"logged_at,omitempty"`
+		IdempotencyKey string `json:"idempotency_key,omitempty"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.nutritionService.LogFoodInLocation(r.Context(), currentUserID(r.Context()), in.FoodID, in.MealType, in.QuantityG, in.LoggedAt, loc)
+	out, err := s.nutritionService.LogFoodBatchInLocation(r.Context(), currentUserID(r.Context()), in.MealType, []nutrition.FoodBatchItem{{FoodID:in.FoodID, QuantityG:in.QuantityG}}, in.LoggedAt, in.IdempotencyKey, "manual", "", loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1005,11 +1009,12 @@ func (s *Server) repeatFoodEntry(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		MealType string     `json:"meal_type,omitempty"`
 		LoggedAt *time.Time `json:"logged_at,omitempty"`
+		IdempotencyKey string `json:"idempotency_key,omitempty"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.nutritionService.RepeatEntry(r.Context(), currentUserID(r.Context()), r.PathValue("entry_id"), in.MealType, in.LoggedAt)
+	out, err := s.nutritionService.RepeatEntryWithKey(r.Context(), currentUserID(r.Context()), r.PathValue("entry_id"), in.MealType, in.LoggedAt, in.IdempotencyKey)
 	if err != nil {
 		writeServiceError(w, err)
 		return

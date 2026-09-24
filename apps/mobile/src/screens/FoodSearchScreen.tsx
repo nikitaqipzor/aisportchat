@@ -3,6 +3,7 @@ import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, V
 import {api, FoodEntry, FoodItem, NutritionDay} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {localTimeZone} from '../domain/date';
+import {withFoodIdempotency} from '../domain/foodIdempotency';
 import {colors, control, radius, spacing} from '../theme/tokens';
 
 const meals: Array<{id: FoodEntry['meal_type']; title: string}> = [
@@ -23,6 +24,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
   const [adding,setAdding]=useState(false);
   const [hasSearched,setHasSearched]=useState(false);
   const requestVersion=useRef(0);
+  const lastSearch=useRef<{kind:'barcode'|'text';value:string}>({kind:'text',value:''});
 
   useEffect(()=>{
     void search('');
@@ -39,6 +41,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
   }
 
   async function search(value=query){
+    lastSearch.current={kind:'text',value};
     const version=++requestVersion.current;
     setSelected(null);setItems([]);setLoading(true);setError('');setHasSearched(true);
     try { const result=await api.searchFoods(accessToken,value.trim()); if(version===requestVersion.current)setItems(result.items); }
@@ -47,6 +50,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
   }
   async function lookupBarcode(){
     const value=barcode.replace(/\s/g,'');
+    lastSearch.current={kind:'barcode',value};
     const version=++requestVersion.current;
     setSelected(null);setItems([]);setLoading(true);setError('');setHasSearched(true);
     if(!/^\d{8,14}$/.test(value)){setError('Введите от 8 до 14 цифр штрихкода.');setLoading(false);return;}
@@ -59,7 +63,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
   const preview=useMemo(()=>{if(!selected||!validAmount)return null;const factor=amount/100;return{kcal:Math.round(selected.kcal_per_100g*factor),p:Math.round(selected.protein_per_100g*factor),f:Math.round(selected.fat_per_100g*factor),c:Math.round(selected.carbs_per_100g*factor)}},[selected,amount,validAmount]);
   async function add(){
     if(!selected||!validAmount||adding)return;
-    try { setAdding(true); setError(''); onLogged(await api.logFood(accessToken,{food_id:selected.id,meal_type:meal,quantity_g:amount},localTimeZone())); }
+    try { setAdding(true); setError(''); onLogged(await withFoodIdempotency('manual',JSON.stringify({food_id:selected.id,meal_type:meal,quantity_g:amount}),key=>api.logFood(accessToken,{food_id:selected.id,meal_type:meal,quantity_g:amount,idempotency_key:key},localTimeZone()))); }
     catch(e){setError(e instanceof Error?e.message:'Не удалось добавить продукт');}
     finally{setAdding(false);}
   }
@@ -76,7 +80,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
     {!loading&&hasSearched&&items.length===0&&!error?<View style={styles.emptyCard}><Text style={styles.emptyTitle}>Ничего не найдено</Text><Text style={styles.muted}>Проверьте запрос или добавьте продукт вручную.</Text><AppButton label="Создать продукт" variant="secondary" onPress={onCustom}/></View>:null}
     <View style={styles.list} accessibilityRole="radiogroup">{items.map(item=><Pressable key={item.id} accessibilityRole="radio" accessibilityState={{selected:selected?.id===item.id}} accessibilityLabel={`${item.name}, ${Math.round(item.kcal_per_100g)} килокалорий на 100 граммов`} onPress={()=>{setSelected(item);setGrams(String(Math.round(item.serving_g||100)));setError('')}} style={[styles.food,selected?.id===item.id&&styles.foodSelected]}><View style={styles.flex}><Text style={[styles.foodTitle,selected?.id===item.id&&styles.white]}>{item.name}</Text><Text style={[styles.foodMeta,selected?.id===item.id&&styles.whiteSoft]}>{item.source==='custom'?'Мой продукт · ':''}{Math.round(item.kcal_per_100g)} kcal · Б {item.protein_per_100g} · Ж {item.fat_per_100g} · У {item.carbs_per_100g}</Text></View></Pressable>)}</View>
     {selected?<View style={styles.editor}><Text style={styles.editorTitle}>{selected.name}</Text><Text style={styles.label}>Количество, г</Text><TextInput accessibilityLabel="Количество продукта в граммах" value={grams} onChangeText={setGrams} keyboardType="decimal-pad" maxLength={7} style={[styles.grams,!validAmount&&styles.inputInvalid]}/>{!validAmount?<Text style={styles.fieldError}>Введите значение от 1 до 5000 г.</Text>:null}<Text accessibilityLiveRegion="polite" style={styles.preview}>{preview?`${preview.kcal} kcal · Б ${preview.p} · Ж ${preview.f} · У ${preview.c}`:'—'}</Text><AppButton label="Добавить в дневник" loading={adding} disabled={!validAmount} onPress={()=>void add()}/></View>:null}
-    {error?<View style={styles.errorCard}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><AppButton label="Повторить поиск" variant="text" onPress={()=>void search()}/></View>:null}
+    {error?<View style={styles.errorCard}><Text accessibilityRole="alert" style={styles.error}>{error}</Text>{!selected?<AppButton label="Повторить поиск" variant="text" onPress={()=>void (lastSearch.current.kind==='barcode'?lookupBarcode():search(lastSearch.current.value))}/>:null}</View>:null}
   </ScrollView>;
 }
 

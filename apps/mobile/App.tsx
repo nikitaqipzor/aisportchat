@@ -91,6 +91,7 @@ export default function App() {
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
   const [workout, setWorkout] = useState<WorkoutView | null>(null);
   const [summary, setSummary] = useState<FinishResult | null>(null);
+  const [summarySavedOnServer, setSummarySavedOnServer] = useState(true);
   const [booting, setBooting] = useState(true);
   const [systemMessage, setSystemMessage] = useState('');
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleId | null>(null);
@@ -312,6 +313,7 @@ export default function App() {
     const currentTokens = (await syncPending(tokens)) ?? tokens;
     try {
       const result = await api.finishWorkout(currentTokens.access_token, workout.workout.id);
+      setSummarySavedOnServer(true);
       setSummary(result);
       setWorkout(result.workout);
       await sessionStorage.saveActiveWorkout(null);
@@ -324,6 +326,7 @@ export default function App() {
       }
       await sessionStorage.enqueueFinish(workout.workout.id);
       const result = localFinished(workout);
+      setSummarySavedOnServer(false);
       setSummary(result);
       setWorkout(result.workout);
       await sessionStorage.saveActiveWorkout(null);
@@ -426,7 +429,7 @@ export default function App() {
       {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next);setPreviewOrigin('muscle');setPreviewCanStart(true);setStep('preview');}} />}
       {step === 'preview' && workout && <WorkoutPreviewScreen accessToken={access} workout={workout} canStart={previewCanStart} onBack={() => setStep(previewOrigin === 'manualWorkout' ? 'home' : previewOrigin)} onStart={next => {void updateWorkout(next); setStep('active');}} />}
       {step === 'active' && workout && <ActiveWorkoutScreen accessToken={access} workout={workout} onWorkoutChange={next => {void updateWorkout(next);}} onFinish={finishWorkout} onCancel={cancelWorkout} techniquePrefill={techniquePrefill} onTechnique={context => {setTechniqueContext(context); setStep('technique');}} />}
-      {step === 'summary' && summary && <WorkoutSummaryScreen result={summary} onDone={() => {setWorkout(null); setSummary(null); setSelectedMuscle(null); setStep('home');}} />}
+      {step === 'summary' && summary && <WorkoutSummaryScreen result={summary} savedOnServer={summarySavedOnServer} onDone={() => {setWorkout(null); setSummary(null); setSelectedMuscle(null); setStep('home');}} />}
       {step === 'history' && <HistoryScreen accessToken={access} onBack={() => setStep('home')} onSelect={workoutId => {setSelectedWorkoutId(workoutId);setWorkoutDetailOrigin('history');setStep('workoutDetail');}} />}
       {step === 'workoutDetail' && selectedWorkoutId && <WorkoutDetailScreen accessToken={access} workoutId={selectedWorkoutId} backLabel={workoutDetailOrigin === 'programDetail' ? 'Программа' : 'История'} onBack={() => setStep(workoutDetailOrigin)} onOpenPlanned={next => {setWorkout(next);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} onResume={next => {void updateWorkout(next);setStep('active');}} onRepeat={next => {setWorkout(next);setSelectedWorkoutId(next.workout.id);setSelectedMuscle(next.workout.muscle as MuscleId);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} />}
       {step === 'nutrition' && <NutritionScreen accessToken={access} onBack={() => setStep('home')} onSetup={() => setStep('nutritionSetup')} onAddFood={() => setStep('foodSearch')} onRecipes={() => setStep('recipes')} onAI={() => setStep('aiFood')} />}

@@ -32,10 +32,23 @@ export function WorkoutDetailScreen({
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState('');
+  const [archivedProgram, setArchivedProgram] = useState(false);
 
   async function load() {
     setLoading(true); setError('');
-    try { setWorkout(await api.getWorkout(accessToken, workoutId)); }
+    try {
+      const details = await api.getWorkout(accessToken, workoutId);
+      setWorkout(details);
+      setArchivedProgram(false);
+      if (details.workout.status === 'planned') {
+        try {
+          const programs = await api.programHistory(accessToken, 50);
+          setArchivedProgram(programs.items.some(item => item.program.status !== 'active' && item.sessions.some(session => session.workout_id === workoutId)));
+        } catch {
+          // The server still enforces this rule when a workout is started.
+        }
+      }
+    }
     catch (e) { setWorkout(null); setError(e instanceof Error ? e.message : 'Не удалось загрузить тренировку.'); }
     finally { setLoading(false); }
   }
@@ -111,7 +124,8 @@ export function WorkoutDetailScreen({
 
       {workout.exercises.length===0?<View style={styles.empty}><Text style={styles.stateTitle}>Нет записанных упражнений</Text><Text style={styles.muted}>В этой тренировке не сохранилось ни одного упражнения.</Text></View>:null}
       {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-      {workout.workout.status === 'planned' ? <AppButton label="Открыть план и начать" testID="workout-detail-start-planned" onPress={() => onOpenPlanned(workout)} /> : null}
+      {archivedProgram ? <Text accessibilityRole="alert" style={styles.muted}>Программа перенесена в архив. Эту тренировку можно просматривать, но нельзя начинать.</Text> : null}
+      {workout.workout.status === 'planned' && !archivedProgram ? <AppButton label="Открыть план и начать" testID="workout-detail-start-planned" onPress={() => onOpenPlanned(workout)} /> : null}
       {workout.workout.status === 'active' ? <AppButton label="Продолжить тренировку" testID="workout-detail-resume" onPress={() => onResume(workout)} /> : null}
       {workout.workout.status === 'completed' ? (
         <AppButton label="Повторить с прогрессией" testID="workout-detail-repeat" loading={working} onPress={() => void repeat()} />

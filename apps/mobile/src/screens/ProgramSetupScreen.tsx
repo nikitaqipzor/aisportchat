@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
+import {ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, TrainingProgram} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
@@ -40,9 +40,30 @@ export function ProgramSetupScreen({accessToken, onBack, onCreated}: {
   }, [accessToken, loadAttempt]);
 
   async function create() {
+    if (saving) return;
     if (!allowed.includes(environment) || workouts < 1 || workouts > 7) {
       setError('Проверь настройки программы.'); return;
     }
+    try {
+      setSaving(true); setError('');
+      const existing = await api.activeProgram(accessToken);
+      if (existing) {
+        setSaving(false);
+        Alert.alert('Заменить активную программу?', `«${existing.program.title}» уйдёт в архив. Выполненные тренировки сохранятся.`, [
+          {text: 'Оставить прежнюю', style: 'cancel'},
+          {text: 'Создать новую', style: 'destructive', onPress: () => {void createConfirmed();}},
+        ]);
+        return;
+      }
+      await createConfirmed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось проверить текущую программу.');
+      setSaving(false);
+    }
+  }
+
+  async function createConfirmed() {
+    if (saving) return;
     try {
       setSaving(true); setError('');
       const program = await api.generateProgram(accessToken, {weeks, workouts_per_week: workouts, environment});

@@ -65,6 +65,25 @@ func TestGenerateProgramCreatesCalendarAndDeload(t *testing.T) {
 	}
 }
 
+func TestArchivedProgramWorkoutCannotBeStartedFromHistory(t *testing.T) {
+	ctx := context.Background()
+	st, userID := programTestUser(t)
+	svc := NewService(st)
+	program, err := svc.Generate(ctx, userID, GenerateInput{Weeks: 4, WorkoutsPerWeek: 3, Environment: "gym"})
+	if err != nil { t.Fatal(err) }
+	session := program.Sessions[0]
+	details, err := st.CreateWorkout(ctx, store.Workout{UserID: userID, Muscle: session.Muscle, Environment: session.Environment, Status: "planned", DurationMinutes: 60}, []store.WorkoutExercise{{ExerciseID: "bench_press", TargetSets: 3, TargetRepsMin: 6, TargetRepsMax: 10}})
+	if err != nil { t.Fatal(err) }
+	if _, err = svc.LinkWorkout(ctx, userID, session.ID, details.Workout.ID); err != nil { t.Fatal(err) }
+	if _, err = svc.Archive(ctx, userID, program.Program.ID); err != nil { t.Fatal(err) }
+	if _, err = st.StartWorkout(ctx, userID, details.Workout.ID); err != store.ErrInvalidState {
+		t.Fatalf("archived planned workout should be rejected, got %v", err)
+	}
+	manual, err := st.CreateWorkout(ctx, store.Workout{UserID: userID, Muscle: "chest", Environment: "gym", Status: "planned", DurationMinutes: 60}, nil)
+	if err != nil { t.Fatal(err) }
+	if _, err = st.StartWorkout(ctx, userID, manual.Workout.ID); err != nil { t.Fatalf("unlinked planned workout should remain available: %v", err) }
+}
+
 func TestProgramSessionLifecycleAndAnalytics(t *testing.T) {
 	ctx := context.Background()
 	st, userID := programTestUser(t)

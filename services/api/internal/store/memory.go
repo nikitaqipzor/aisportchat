@@ -344,6 +344,13 @@ func (m *Memory) StartWorkout(_ context.Context, userID, workoutID string) (Work
 	if w.Status != "planned" {
 		return WorkoutDetails{}, ErrInvalidState
 	}
+	for programID, sessions := range m.programSessions {
+		for _, session := range sessions {
+			if session.WorkoutID != nil && *session.WorkoutID == workoutID && m.programs[programID].Status != "active" {
+				return WorkoutDetails{}, ErrInvalidState
+			}
+		}
+	}
 	now := time.Now().UTC()
 	w.Status = "active"
 	w.StartedAt = &now
@@ -532,6 +539,26 @@ func (m *Memory) ListWorkouts(_ context.Context, userID string, limit int) ([]Wo
 	for _, w := range items {
 		out = append(out, m.detailsLocked(w.ID))
 	}
+	return out, nil
+}
+
+func (m *Memory) ListWorkoutHistory(_ context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	items := make([]Workout, 0)
+	for _, w := range m.workouts {
+		if w.UserID != userID || filter.Muscle != "" && w.Muscle != filter.Muscle || filter.Environment != "" && w.Environment != filter.Environment || filter.Status != "" && w.Status != filter.Status || filter.Favorite != nil && w.Favorite != *filter.Favorite { continue }
+		items = append(items, w)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) { return items[i].ID > items[j].ID }
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	start := filter.Offset
+	if start < 0 { start = 0 }; if start > len(items) { start = len(items) }
+	end := start + filter.Limit; if end > len(items) { end = len(items) }
+	out := make([]WorkoutDetails, 0, end-start)
+	for _, item := range items[start:end] { out = append(out, m.detailsLocked(item.ID)) }
 	return out, nil
 }
 

@@ -68,6 +68,12 @@ type OnboardingStatus struct {
 	Completed         bool `json:"completed"`
 }
 
+type WorkoutHistoryFilter struct {
+	Limit, Offset int
+	Muscle, Environment, Status string
+	Favorite *bool
+}
+
 type RefreshSession struct {
 	TokenHash string
 	UserID    string
@@ -352,6 +358,7 @@ type Store interface {
 	CompleteWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	CancelWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	ListWorkouts(ctx context.Context, userID string, limit int) ([]WorkoutDetails, error)
+	ListWorkoutHistory(ctx context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error)
 	LastCompletedWorkout(ctx context.Context, userID, muscle, environment string) (WorkoutDetails, error)
 	LastExercisePerformance(ctx context.Context, userID, exerciseID string) (ExercisePerformance, error)
 	ActiveWorkout(ctx context.Context, userID string) (WorkoutDetails, error)

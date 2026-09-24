@@ -64,7 +64,15 @@ assert.match(picker, /PHOTO_PICK_TOO_LARGE/);
 assert.match(picker, /PHOTO_PICK_UNSUPPORTED/);
 
 const diary = fs.readFileSync('apps/mobile/src/screens/NutritionScreen.tsx', 'utf8');
-assert.match(diary, /await api\.repeatFoodEntry\(accessToken, entry\.id, entry\.meal_type\)/);
+assert.match(diary, /withFoodIdempotency\(`repeat-\$\{entry\.id\}`/);
+assert.match(diary, /withFoodIdempotency\(`undo-\$\{entry\.id\}`/);
+assert.match(diary, /setUndoEntry\(null\);\s*await load\(\)/);
+const foodSearch = fs.readFileSync('apps/mobile/src/screens/FoodSearchScreen.tsx', 'utf8');
+assert.match(foodSearch, /withFoodIdempotency\('manual'/);
+assert.match(foodSearch, /lastSearch\.current\.kind==='barcode'\?lookupBarcode\(\)/);
+const recipes = fs.readFileSync('apps/mobile/src/screens/RecipesScreen.tsx', 'utf8');
+assert.match(recipes, /version===searchVersion\.current/);
+assert.match(recipes, /createdPendingRefresh\.current=true;await load\(\)/);
 assert.match(diary, /const today = currentLocalDate\(\)/);
 assert.match(diary, /if \(today !== requestedDate\) openDate\(today\)/);
 assert.match(diary, /else \{ setDay\(null\); await load\(\); \}/);

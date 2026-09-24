@@ -92,6 +92,10 @@ func (s *Service) FoodByBarcode(ctx context.Context, userID, barcode string) (st
 }
 
 func (s *Service) RepeatEntry(ctx context.Context, userID, entryID, mealType string, loggedAt *time.Time) (DaySummary, error) {
+	return s.RepeatEntryWithKey(ctx,userID,entryID,mealType,loggedAt,"")
+}
+
+func (s *Service) RepeatEntryWithKey(ctx context.Context, userID, entryID, mealType string, loggedAt *time.Time, operationKey string) (DaySummary, error) {
 	previous, err := s.store.GetFoodEntry(ctx, userID, entryID)
 	if err != nil {
 		return DaySummary{}, err
@@ -99,7 +103,7 @@ func (s *Service) RepeatEntry(ctx context.Context, userID, entryID, mealType str
 	if mealType == "" {
 		mealType = previous.MealType
 	}
-	return s.LogFood(ctx, userID, previous.FoodID, mealType, previous.QuantityG, loggedAt)
+	return s.LogFoodBatch(ctx,userID,mealType,[]FoodBatchItem{{FoodID:previous.FoodID,QuantityG:previous.QuantityG}},loggedAt,operationKey,"repeat:"+entryID,"")
 }
 
 func (s *Service) CreateRecipe(ctx context.Context, userID string, in RecipeInput) (store.Recipe, error) {

@@ -4,13 +4,14 @@ import {AppButton} from '../components/AppButton';
 import {FinishResult} from '../api/client';
 import {colors, radius, spacing} from '../theme/tokens';
 
-export function WorkoutSummaryScreen({result, onDone}: {result: FinishResult; onDone: () => void}) {
+export function WorkoutSummaryScreen({result, savedOnServer, onDone}: {result: FinishResult; savedOnServer: boolean; onDone: () => void}) {
   const completedSets = result.workout.exercises.reduce((sum, item) => sum + item.sets.length, 0);
   return (
     <ScrollView testID="workout-summary-screen" contentContainerStyle={styles.container}>
       <Text style={styles.eyebrow}>ГОТОВО</Text>
       <Text accessibilityRole="header" style={styles.title}>Тренировка завершена</Text>
-      <Text style={styles.lead}>Результат сохранён в истории. Отличная работа — восстановись перед следующей нагрузкой.</Text>
+      <Text style={styles.lead}>{savedOnServer ? 'Результат сохранён в истории. Отличная работа — восстановись перед следующей нагрузкой.' : 'Тренировка завершена на этом устройстве. Результат будет записан в историю после восстановления связи и синхронизации.'}</Text>
+      {!savedOnServer ? <Text accessibilityRole="alert" style={styles.early}>Ожидает синхронизации. Пока результат и рекорды не подтверждены сервером.</Text> : null}
       <View style={styles.stats}>
         <View style={styles.stat}><Text style={styles.value}>{completedSets}</Text><Text style={styles.label}>подходов</Text></View>
         <View style={styles.stat}><Text style={styles.value}>{Math.round(result.workout.workout.total_volume)}</Text><Text style={styles.label}>кг объёма</Text></View>
@@ -36,13 +37,13 @@ export function WorkoutSummaryScreen({result, onDone}: {result: FinishResult; on
         </>
       ) : null}
 
-      <Text style={styles.section}>Следующая прогрессия</Text>
+      {savedOnServer ? <><Text style={styles.section}>Следующая прогрессия</Text>
       {result.next_recommendations.length===0?<View style={styles.empty}><Text style={styles.name}>Рекомендации появятся позже</Text><Text style={styles.message}>Системе нужно больше выполненных подходов, чтобы предложить следующую прогрессию.</Text></View>:result.next_recommendations.map(item => (
         <View key={item.exercise_id} style={styles.card}>
           <Text style={styles.name}>{item.exercise_name}</Text>
           <Text style={styles.message}>{item.message}</Text>
         </View>
-      ))}
+      ))}</> : null}
 
       <AppButton label="На главную" testID="summary-home" onPress={onDone} />
     </ScrollView>

@@ -31,6 +31,28 @@ func TestBatchFoodAllOrNothingAndRetries(t *testing.T) {
 	if _,err:=svc.LogFoodBatch(ctx,userID,"breakfast",items,&when,"short","recipe:other","");err==nil {t.Fatal("expected invalid key rejection")}
 }
 
+func TestManualAndRepeatedFoodRetries(t *testing.T) {
+	weight:=80.0
+	svc,_,userID:=nutritionFixture(t,&weight)
+	setAutoNutrition(t,svc,userID)
+	ctx:=context.Background()
+	when:=time.Date(2026,9,20,12,0,0,0,time.UTC)
+	items:=[]FoodBatchItem{{FoodID:"banana",QuantityG:125}}
+	first,err:=svc.LogFoodBatch(ctx,userID,"lunch",items,&when,"manual-action-01","manual","")
+	if err!=nil || len(first.Entries)!=1 {t.Fatalf("manual first: entries=%d err=%v",len(first.Entries),err)}
+	for i:=0;i<2;i++ {
+		day,err:=svc.LogFoodBatch(ctx,userID,"lunch",items,&when,"manual-action-01","manual","")
+		if err!=nil || len(day.Entries)!=1 {t.Fatalf("manual retry: entries=%d err=%v",len(day.Entries),err)}
+	}
+	entryID:=first.Entries[0].ID
+	for i:=0;i<2;i++ {
+		day,err:=svc.RepeatEntryWithKey(ctx,userID,entryID,"lunch",&when,"repeat-action-01")
+		if err!=nil || len(day.Entries)!=2 {t.Fatalf("repeat retry: entries=%d err=%v",len(day.Entries),err)}
+	}
+	day,err:=svc.RepeatEntryWithKey(ctx,userID,entryID,"lunch",&when,"repeat-action-02")
+	if err!=nil || len(day.Entries)!=3 {t.Fatalf("new repeat action: entries=%d err=%v",len(day.Entries),err)}
+}
+
 func TestRecipeLoggingIsAtomicAndKeyed(t *testing.T) {
 	weight:=80.0
 	svc,st,userID:=nutritionFixture(t,&weight)

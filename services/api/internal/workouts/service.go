@@ -74,6 +74,7 @@ type ProgressionRecommendation struct {
 
 type HistoryFilter struct {
 	Limit       int
+	Offset      int
 	Muscle      string
 	Environment string
 	Status      string
@@ -382,40 +383,31 @@ func (s *Service) Finish(ctx context.Context, userID, workoutID string) (FinishR
 }
 
 func (s *Service) History(ctx context.Context, userID string, filter HistoryFilter) ([]WorkoutView, error) {
+	page, _, err := s.HistoryPage(ctx, userID, filter)
+	return page, err
+}
+
+func (s *Service) HistoryPage(ctx context.Context, userID string, filter HistoryFilter) ([]WorkoutView, bool, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	// Pull enough rows before applying MVP filters in the domain layer. This keeps Store simple
-	// and lets us move filtering into SQL later without changing the HTTP contract.
-	items, err := s.store.ListWorkouts(ctx, userID, 100)
+	if filter.Offset < 0 { filter.Offset = 0 }
+	items, err := s.store.ListWorkoutHistory(ctx, userID, store.WorkoutHistoryFilter{Limit: limit + 1, Offset: filter.Offset, Muscle: filter.Muscle, Environment: filter.Environment, Status: filter.Status, Favorite: filter.Favorite})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	out := make([]WorkoutView, 0, min(limit, len(items)))
+	hasMore := len(items) > limit
+	if hasMore { items = items[:limit] }
+	out := make([]WorkoutView, 0, len(items))
 	for _, item := range items {
-		if filter.Muscle != "" && item.Workout.Muscle != filter.Muscle {
-			continue
-		}
-		if filter.Environment != "" && item.Workout.Environment != filter.Environment {
-			continue
-		}
-		if filter.Status != "" && item.Workout.Status != filter.Status {
-			continue
-		}
-		if filter.Favorite != nil && item.Workout.Favorite != *filter.Favorite {
-			continue
-		}
 		view, err := s.view(ctx, userID, item)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, view)
-		if len(out) >= limit {
-			break
-		}
 	}
-	return out, nil
+	return out, hasMore, nil
 }
 
 func (s *Service) Favorite(ctx context.Context, userID, workoutID string, favorite bool) (WorkoutView, error) {
