@@ -35,7 +35,7 @@ func TestPostgresBodyScanUpsertChecksOwnerAndDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pg.DeleteBodyScan(ctx, owner.ID, scan.Scan.ID)
-	photo := BodyScanPhoto{ScanID: scan.Scan.ID, UserID: other.ID, View: "front", StorageKey: "foreign-key", MimeType: "image/jpeg"}
+	photo := BodyScanPhoto{ScanID: scan.Scan.ID, UserID: other.ID, View: "front", StorageKey: "foreign-key", MimeType: "image/jpeg", QualityStatus: "accepted"}
 	if _, err := pg.UpsertBodyScanPhoto(ctx, photo); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("foreign owner inserted photo: %v", err)
 	}
