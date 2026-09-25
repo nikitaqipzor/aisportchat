@@ -149,7 +149,8 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
     {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     {posePreview && <PoseSkeletonPreview frame={posePreview} />}
     {result && <ResultCard result={result} nativeLiveCount={nativeLiveCount} />}
-    {result && workoutContext && linkedKey && onUseLinkedResult && !resultFromHistory ? <AppButton label={`Использовать ${result.rep_count} повторений в подходе`} onPress={() => onUseLinkedResult(result)} testID="technique-use-result" /> : null}
+    {result && result.rep_count > 0 && workoutContext && linkedKey && onUseLinkedResult && !resultFromHistory ? <AppButton label={`Использовать ${result.rep_count} повторений в подходе`} onPress={() => onUseLinkedResult(result)} testID="technique-use-result" /> : null}
+    {result && result.rep_count === 0 && workoutContext && linkedKey && !resultFromHistory ? <Text accessibilityRole="alert" style={styles.warning}>Повторы не распознаны. Запишите подход ещё раз — нулевой результат нельзя перенести в тренировку.</Text> : null}
 
     <Text style={styles.section}>Последние анализы</Text>
     {history.length === 0 ? <Text style={styles.muted}>Пока нет записей.</Text> : history.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Открыть анализ ${item.exercise_name}`} onPress={()=>void openHistory(item.id)} disabled={Boolean(historyLoadingId)} style={styles.history}><View style={{flex: 1}}><Text style={styles.historyTitle}>{item.exercise_name}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.rep_count} повт. · {item.capture_mode === 'live' ? 'LIVE' : 'VIDEO'}</Text></View><Text style={styles.scoreSmall}>{historyLoadingId === item.id ? '…' : item.technique_score}</Text></Pressable>)}

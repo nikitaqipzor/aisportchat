@@ -351,6 +351,7 @@ type Store interface {
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 
 	CreateWorkout(ctx context.Context, workout Workout, exercises []WorkoutExercise) (WorkoutDetails, error)
+	CreateProgramSessionWorkout(ctx context.Context, userID, sessionID string, workout Workout, exercises []WorkoutExercise) (WorkoutDetails, error)
 	GetWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	StartWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	UpsertWorkoutSet(ctx context.Context, userID, workoutID string, set WorkoutSet) (WorkoutDetails, error)

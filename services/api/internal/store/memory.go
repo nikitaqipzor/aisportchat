@@ -318,6 +318,56 @@ func (m *Memory) CreateWorkout(_ context.Context, w Workout, exercises []Workout
 	return m.detailsLocked(w.ID), nil
 }
 
+// CreateProgramSessionWorkout serializes archive/replacement with creation and
+// linking under the same lock. A duplicate request never inserts a workout.
+func (m *Memory) CreateProgramSessionWorkout(_ context.Context, userID, sessionID string, w Workout, exercises []WorkoutExercise) (WorkoutDetails, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for programID, sessions := range m.programSessions {
+		program := m.programs[programID]
+		if program.UserID != userID {
+			continue
+		}
+		for i := range sessions {
+			if sessions[i].ID != sessionID {
+				continue
+			}
+			if program.Status != "active" || sessions[i].WorkoutID != nil || sessions[i].Status == "completed" || w.UserID != userID {
+				return WorkoutDetails{}, ErrInvalidState
+			}
+			if w.ID == "" {
+				w.ID = newID()
+			}
+			if w.Status == "" {
+				w.Status = "planned"
+			}
+			w.CreatedAt = time.Now().UTC()
+			for j := range exercises {
+				if exercises[j].ID == "" {
+					exercises[j].ID = newID()
+				}
+				exercises[j].WorkoutID = w.ID
+				exercises[j].Position = j + 1
+			}
+			m.workouts[w.ID] = w
+			m.workoutEx[w.ID] = cloneWorkoutExercises(exercises)
+			m.workoutSets[w.ID] = nil
+			sessions[i].WorkoutID = &w.ID
+			if sessions[i].Status == "missed" {
+				sessions[i].Status = "rescheduled"
+			}
+			if sessions[i].AdaptationReason == "" {
+				sessions[i].AdaptationReason = "Тренировка создана по календарю программы."
+			}
+			m.programSessions[programID] = sessions
+			program.UpdatedAt = time.Now().UTC()
+			m.programs[programID] = program
+			return m.detailsLocked(w.ID), nil
+		}
+	}
+	return WorkoutDetails{}, ErrNotFound
+}
+
 func (m *Memory) GetWorkout(_ context.Context, userID, workoutID string) (WorkoutDetails, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

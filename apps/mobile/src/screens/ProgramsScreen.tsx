@@ -28,7 +28,7 @@ export function ProgramsScreen({accessToken, onBack, onCreate, onOpen}: {
       setAnalytics(undefined); setAnalyticsError(false);
       const [stats, old] = await Promise.all([
         current ? api.programAnalytics(accessToken, current.program.id).catch(() => {setAnalyticsError(true); return undefined;}) : Promise.resolve(undefined),
-        api.programHistory(accessToken, 10),
+        api.programHistory(accessToken, 50),
       ]);
       setAnalytics(stats);
       setHistory(old.items.filter(item => item.program.status !== 'active'));

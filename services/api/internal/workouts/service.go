@@ -119,7 +119,7 @@ func NewService(st store.Store, engine *Engine) *Service {
 }
 
 func (s *Service) Generate(ctx context.Context, userID string, in GenerateInput) (WorkoutView, error) {
-	return s.generate(ctx, userID, in, 1, 1)
+	return s.generate(ctx, userID, in, 1, 1, "")
 }
 
 // CreateManual persists user-selected workout facts. It deliberately validates
@@ -169,10 +169,28 @@ func (s *Service) GenerateAdapted(ctx context.Context, userID string, in Generat
 	if intensityMultiplier > 1.1 {
 		intensityMultiplier = 1.1
 	}
-	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier)
+	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier, "")
 }
 
-func (s *Service) generate(ctx context.Context, userID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64) (WorkoutView, error) {
+// GenerateAdaptedForSession persists the generated workout and its program link
+// atomically. The public GenerateAdapted API remains unchanged.
+func (s *Service) GenerateAdaptedForSession(ctx context.Context, userID, sessionID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64) (WorkoutView, error) {
+	if volumeMultiplier < 0.4 {
+		volumeMultiplier = 0.4
+	}
+	if volumeMultiplier > 1.2 {
+		volumeMultiplier = 1.2
+	}
+	if intensityMultiplier < 0.7 {
+		intensityMultiplier = 0.7
+	}
+	if intensityMultiplier > 1.1 {
+		intensityMultiplier = 1.1
+	}
+	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier, sessionID)
+}
+
+func (s *Service) generate(ctx context.Context, userID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64, sessionID string) (WorkoutView, error) {
 	status, err := s.store.GetOnboardingStatus(ctx, userID)
 	if err != nil || !status.Completed {
 		return WorkoutView{}, errors.New("complete onboarding before generating a workout")
@@ -225,10 +243,16 @@ func (s *Service) generate(ctx context.Context, userID string, in GenerateInput,
 		})
 	}
 
-	details, err := s.store.CreateWorkout(ctx, store.Workout{
+	workout := store.Workout{
 		UserID: userID, Muscle: generated.Muscle, Environment: generated.Environment,
 		Status: "planned", DurationMinutes: generated.DurationMinutes,
-	}, rows)
+	}
+	var details store.WorkoutDetails
+	if sessionID != "" {
+		details, err = s.store.CreateProgramSessionWorkout(ctx, userID, sessionID, workout, rows)
+	} else {
+		details, err = s.store.CreateWorkout(ctx, workout, rows)
+	}
 	if err != nil {
 		return WorkoutView{}, err
 	}

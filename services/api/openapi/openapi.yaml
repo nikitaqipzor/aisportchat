@@ -712,6 +712,8 @@ paths:
             are applied to actual targets
         '200':
           description: Existing linked workout returned idempotently
+        '409':
+          description: Session belongs to a program that is no longer active
   /programs/sessions/{session_id}/reschedule:
     post:
       operationId: rescheduleProgramSession

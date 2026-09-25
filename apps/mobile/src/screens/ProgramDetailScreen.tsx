@@ -1,26 +1,31 @@
-import React,{useCallback,useEffect,useMemo,useState} from 'react';
+import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {ActivityIndicator,Alert,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
 import {api,ProgramAnalytics,ProgramSession,TrainingProgram,WorkoutView} from '../api/client';
 import {muscleMeta,MuscleId} from '../domain/muscles';
 import {currentLocalDate,formatCalendarDate} from '../domain/date';
 import {AppButton} from '../components/AppButton';
 import {colors,control,radius,spacing} from '../theme/tokens';
+import {LatestRequestGuard} from '../domain/latestRequest';
 
 const statusLabel:Record<string,string>={planned:'Запланировано',rescheduled:'Перенесено',missed:'Пропущено',completed:'Выполнено',skipped:'Пропущено'};
 function muscleTitle(id:string){return (muscleMeta as Record<string,{title:string}>)[id]?.title ?? id}
 
 export function ProgramDetailScreen({accessToken,programId,onBack,onWorkout,onArchived}:{accessToken:string;programId:string;onBack:()=>void;onWorkout:(workout:WorkoutView,muscle:MuscleId,canStart:boolean)=>void;onArchived:()=>void}){
  const [program,setProgram]=useState<TrainingProgram>();const [analytics,setAnalytics]=useState<ProgramAnalytics>();const [loading,setLoading]=useState(true);const [busy,setBusy]=useState('');const [message,setMessage]=useState('');const [loadError,setLoadError]=useState('');const [analyticsError,setAnalyticsError]=useState('');
+ const loadGuard=useRef(new LatestRequestGuard());
  const load=useCallback(async()=>{
-  setLoading(true);setLoadError('');setAnalyticsError('');setAnalytics(undefined);
+  const isLatest=loadGuard.current.begin();
+  setLoading(true);setProgram(undefined);setLoadError('');setAnalyticsError('');setAnalytics(undefined);
   const [programResult,analyticsResult]=await Promise.allSettled([api.getProgram(accessToken,programId),api.programAnalytics(accessToken,programId)]);
+  if(!isLatest())return;
   if(programResult.status==='fulfilled')setProgram(programResult.value);
-  else setLoadError(programResult.reason instanceof Error?programResult.reason.message:'Не удалось загрузить программу.');
+  else {setProgram(undefined);setLoadError(programResult.reason instanceof Error?programResult.reason.message:'Не удалось загрузить программу.');}
   if(analyticsResult.status==='fulfilled')setAnalytics(analyticsResult.value);
   else setAnalyticsError('Аналитика временно недоступна. План тренировок можно открывать и выполнять.');
   setLoading(false);
  },[accessToken,programId]);
- useEffect(()=>{void load()},[load]);
+ useEffect(()=>{void load();return()=>loadGuard.current.invalidate()},[load]);
+ useEffect(()=>()=>loadGuard.current.unmount(),[]);
  const weeks=useMemo(()=>{const out=new Map<number,ProgramSession[]>();for(const s of program?.sessions??[]){out.set(s.week_number,[...(out.get(s.week_number)??[]),s])}return [...out.entries()]},[program]);
  async function start(s:ProgramSession){
   try{

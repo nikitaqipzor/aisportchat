@@ -8,6 +8,7 @@ const LEGACY_KEYS = ['fitness.active-workout.v1', 'fitness.offline-queue.v1', 'f
 const key = (kind: string, owner: string) => `fitness.${kind}.v3.${encodeURIComponent(owner)}`;
 const revokedKey = (owner: string) => key('session-revoked', owner);
 let keychainMutation: Promise<void> = Promise.resolve();
+let queueMutation: Promise<void> = Promise.resolve();
 
 export type OfflineOperation =
   | {id: string; type: 'log_set'; workoutId: string; payload: {workout_exercise_id: string; set_number: number; weight?: number; repetitions: number; rpe?: number; rir?: number}; createdAt: string}
@@ -28,6 +29,33 @@ async function migrateLegacy<T>(kind: string, owner: string): Promise<T | null> 
 }
 async function saveOwned<T>(kind: string, value: T | null) { const owner = await currentOwnerUserId(); if (!owner) return; const storageKey = key(kind, owner); if (value === null) await AsyncStorage.removeItem(storageKey); else await AsyncStorage.setItem(storageKey, JSON.stringify(value)); }
 async function loadOwned<T>(kind: string): Promise<T | null> { const owner = await currentOwnerUserId(); if (!owner) return null; const storageKey = key(kind, owner); const raw = await AsyncStorage.getItem(storageKey); if (!raw) return migrateLegacy<T>(kind, owner); try { return JSON.parse(raw) as T; } catch { await AsyncStorage.removeItem(storageKey); return null; } }
+
+async function mutateQueue(owner: string, update: (queue: OfflineOperation[]) => OfflineOperation[]): Promise<number | null> {
+  const action = async () => {
+    if (await currentOwnerUserId() !== owner) return null;
+    const storageKey = key('offline-queue', owner);
+    const raw = await AsyncStorage.getItem(storageKey);
+    let queue: OfflineOperation[] = [];
+    if (raw) {
+      try { queue = JSON.parse(raw) as OfflineOperation[]; } catch { /* replace invalid queue */ }
+    } else {
+      queue = (await migrateLegacy<OfflineOperation[]>('offline-queue', owner)) ?? [];
+    }
+    const next = update(queue);
+    if (await currentOwnerUserId() !== owner) return null;
+    if (next.length) await AsyncStorage.setItem(storageKey, JSON.stringify(next));
+    else await AsyncStorage.removeItem(storageKey);
+    return next.length;
+  };
+  const pending = queueMutation.then(action, action);
+  queueMutation = pending.then(() => undefined, () => undefined);
+  return pending;
+}
+
+async function mutateCurrentQueue(update: (queue: OfflineOperation[]) => OfflineOperation[]) {
+  const owner = await currentOwnerUserId();
+  if (!owner || await mutateQueue(owner, update) === null) throw new Error('Сессия изменилась. Подход не сохранён.');
+}
 
 export const sessionStorage = {
   currentUserId: currentOwnerUserId,
@@ -55,9 +83,52 @@ export const sessionStorage = {
   async loadAIChat() { return (await loadOwned<AIChatMessage[]>('ai-chat')) ?? []; },
   async clearAIChat() { await saveOwned('ai-chat', null); },
   async loadQueue() { return (await loadOwned<OfflineOperation[]>('offline-queue')) ?? []; },
-  async saveQueue(items: OfflineOperation[]) { await saveOwned('offline-queue', items.length ? items : null); },
-  async enqueueSet(workoutId: string, payload: Extract<OfflineOperation,{type:'log_set'}>['payload']) { const queue=await this.loadQueue(); const index=queue.findIndex(item=>item.type==='log_set'&&item.workoutId===workoutId&&item.payload.workout_exercise_id===payload.workout_exercise_id&&item.payload.set_number===payload.set_number); const operation:OfflineOperation={id:newLocalId(),type:'log_set',workoutId,payload,createdAt:new Date().toISOString()}; if(index>=0)queue[index]=operation;else queue.push(operation);await this.saveQueue(queue); },
-  async enqueueFinish(workoutId:string){const queue=await this.loadQueue();if(!queue.some(item=>item.type==='finish_workout'&&item.workoutId===workoutId))queue.push({id:newLocalId(),type:'finish_workout',workoutId,createdAt:new Date().toISOString()});await this.saveQueue(queue);},
-  async enqueueCancel(workoutId:string){const queue=(await this.loadQueue()).filter(item=>item.workoutId!==workoutId||item.type==='log_set');if(!queue.some(item=>item.type==='cancel_workout'&&item.workoutId===workoutId))queue.push({id:newLocalId(),type:'cancel_workout',workoutId,createdAt:new Date().toISOString()});await this.saveQueue(queue);},
-  async removeWorkoutOperations(workoutId:string){await this.saveQueue((await this.loadQueue()).filter(item=>item.workoutId!==workoutId));},
+  async saveQueue(items: OfflineOperation[]) { await mutateCurrentQueue(() => items); },
+  async removeProcessedQueueOperations(owner: string, ids: string[]) {
+    if (!ids.length) return (await currentOwnerUserId()) === owner ? (await this.loadQueue()).length : null;
+    const processed = new Set(ids);
+    return mutateQueue(owner, queue => queue.filter(item => !processed.has(item.id)));
+  },
+  async saveSyncedWorkoutIfNoPendingSet(owner: string, workout: WorkoutView) {
+    const action = async () => {
+      if (await currentOwnerUserId() !== owner) return false;
+      const raw = await AsyncStorage.getItem(key('offline-queue', owner));
+      let pending: OfflineOperation[] = [];
+      try { if (raw) pending = JSON.parse(raw) as OfflineOperation[]; } catch { return false; }
+      if (pending.some(item => item.type === 'log_set' && item.workoutId === workout.workout.id)) return false;
+      if (await currentOwnerUserId() !== owner) return false;
+      const activeKey = key('active-workout', owner);
+      if (workout.workout.status === 'active') await AsyncStorage.setItem(activeKey, JSON.stringify(workout));
+      else await AsyncStorage.removeItem(activeKey);
+      return true;
+    };
+    const pending = queueMutation.then(action, action);
+    queueMutation = pending.then(() => undefined, () => undefined);
+    return pending;
+  },
+  async enqueueSet(workoutId: string, payload: Extract<OfflineOperation,{type:'log_set'}>['payload']) {
+    await mutateCurrentQueue(queue => {
+      const index = queue.findIndex(item => item.type === 'log_set' && item.workoutId === workoutId && item.payload.workout_exercise_id === payload.workout_exercise_id && item.payload.set_number === payload.set_number);
+      const operation: OfflineOperation = {id: newLocalId(), type: 'log_set', workoutId, payload, createdAt: new Date().toISOString()};
+      if (index >= 0) queue[index] = operation;
+      else queue.push(operation);
+      return queue;
+    });
+  },
+  async enqueueFinish(workoutId: string) {
+    await mutateCurrentQueue(queue => queue.some(item => item.type === 'finish_workout' && item.workoutId === workoutId)
+      ? queue : [...queue, {id: newLocalId(), type: 'finish_workout', workoutId, createdAt: new Date().toISOString()}]);
+  },
+  async enqueueCancel(workoutId: string) {
+    await mutateCurrentQueue(queue => {
+      const remaining = queue.filter(item => item.workoutId !== workoutId || item.type === 'log_set');
+      if (!remaining.some(item => item.type === 'cancel_workout' && item.workoutId === workoutId)) {
+        remaining.push({id: newLocalId(), type: 'cancel_workout', workoutId, createdAt: new Date().toISOString()});
+      }
+      return remaining;
+    });
+  },
+  async removeWorkoutOperations(workoutId: string) {
+    await mutateCurrentQueue(queue => queue.filter(item => item.workoutId !== workoutId));
+  },
 };

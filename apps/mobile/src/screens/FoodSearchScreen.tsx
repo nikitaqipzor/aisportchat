@@ -12,8 +12,8 @@ const meals: Array<{id: FoodEntry['meal_type']; title: string}> = [
 ];
 const parseAmount = (value: string) => Number(value.replace(',', '.'));
 
-export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes}:{accessToken:string;onBack:()=>void;onLogged:(day:NutritionDay)=>void;onCustom:()=>void;onRecipes:()=>void}) {
-  const [query,setQuery]=useState('');
+export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes,initialQuery='',onQueryChange}:{accessToken:string;onBack:()=>void;onLogged:(day:NutritionDay)=>void;onCustom:()=>void;onRecipes:()=>void;initialQuery?:string;onQueryChange?:(query:string)=>void}) {
+  const [query,setQuery]=useState(initialQuery);
   const [barcode,setBarcode]=useState('');
   const [items,setItems]=useState<FoodItem[]>([]);
   const [selected,setSelected]=useState<FoodItem|null>(null);
@@ -27,7 +27,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
   const lastSearch=useRef<{kind:'barcode'|'text';value:string}>({kind:'text',value:''});
 
   useEffect(()=>{
-    void search('');
+    void search(initialQuery);
     return ()=>{requestVersion.current+=1};
   },[accessToken]);
 
@@ -73,7 +73,7 @@ export function FoodSearchScreen({accessToken,onBack,onLogged,onCustom,onRecipes
     <Text style={styles.kicker}>ДОБАВИТЬ ЕДУ</Text><Text accessibilityRole="header" style={styles.title}>Что добавить?</Text>
     <Text style={styles.subtitle}>Найдите продукт в каталоге или создайте свой. Значения указаны на 100 г.</Text>
     <View style={styles.actions}><AppButton label="Свой продукт" variant="secondary" onPress={onCustom} style={styles.action}/><AppButton label="Рецепты" variant="secondary" onPress={onRecipes} style={styles.action}/></View>
-    <View style={styles.searchRow}><TextInput accessibilityLabel="Поиск продукта" value={query} onChangeText={value=>{setQuery(value);invalidateResults()}} onSubmitEditing={()=>void search()} returnKeyType="search" placeholder="Творог, рис, курица…" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Найти" onPress={()=>void search()} disabled={loading}/></View>
+    <View style={styles.searchRow}><TextInput accessibilityLabel="Поиск продукта" value={query} onChangeText={value=>{setQuery(value);onQueryChange?.(value);invalidateResults()}} onSubmitEditing={()=>void search()} returnKeyType="search" placeholder="Творог, рис, курица…" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Найти" onPress={()=>void search()} disabled={loading}/></View>
     <View style={styles.searchRow}><TextInput accessibilityLabel="Штрихкод продукта" value={barcode} onChangeText={value=>{setBarcode(value);invalidateResults()}} onSubmitEditing={()=>void lookupBarcode()} returnKeyType="search" keyboardType="number-pad" maxLength={14} placeholder="Штрихкод" placeholderTextColor={colors.textMuted} style={styles.input}/><AppButton label="Проверить" variant="secondary" onPress={()=>void lookupBarcode()} disabled={loading||!barcode.trim()}/></View>
     <Text style={styles.label}>Приём пищи</Text><View style={styles.meals} accessibilityRole="radiogroup">{meals.map(x=><Pressable key={x.id} accessibilityRole="radio" accessibilityState={{selected:meal===x.id}} onPress={()=>setMeal(x.id)} style={[styles.meal,meal===x.id&&styles.mealActive]}><Text style={[styles.mealText,meal===x.id&&styles.white]}>{x.title}</Text></Pressable>)}</View>
     {loading?<View style={styles.stateRow} accessibilityLiveRegion="polite"><ActivityIndicator color={colors.text}/><Text style={styles.muted}>Ищем продукты…</Text></View>:null}

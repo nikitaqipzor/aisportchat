@@ -23,15 +23,31 @@ assert.match(program, /testID=\{`\$\{s\.workout_id\?'program-open':'program-star
 
 // Exercise the actual load callback with independent API outcomes: optional metrics cannot hide sessions.
 const loadBody = between(program, 'const load=useCallback(async()=>{', '},[accessToken,programId]);').slice('const load=useCallback(async()=>{'.length);
-async function loadWith(programResponse, analyticsResponse) {
+class LatestRequestGuard {
+  generation = 0;
+  mounted = true;
+  begin() {
+    const request = ++this.generation;
+    return () => this.mounted && request === this.generation;
+  }
+  invalidate() { this.generation += 1; }
+  unmount() { this.mounted = false; this.invalidate(); }
+}
+function loadHarness(api) {
   const state = {program: undefined, analytics: 'previous', loading: undefined, loadError: '', analyticsError: ''};
-  const load = new Function('api', 'accessToken', 'programId', 'setLoading', 'setLoadError', 'setAnalyticsError', 'setAnalytics', 'setProgram', `return async function () {${loadBody}}`)(
-    {getProgram: () => programResponse, programAnalytics: () => analyticsResponse},
-    'token', 'program', value => {state.loading = value;}, value => {state.loadError = value;},
+  const loadGuard = {current: new LatestRequestGuard()};
+  const load = new Function('api', 'accessToken', 'programId', 'loadGuard', 'setLoading', 'setLoadError', 'setAnalyticsError', 'setAnalytics', 'setProgram', `return async function () {${loadBody}}`)(
+    api,
+    'token', 'program', loadGuard,
+    value => {state.loading = value;}, value => {state.loadError = value;},
     value => {state.analyticsError = value;}, value => {state.analytics = value;}, value => {state.program = value;},
   );
-  await load();
-  return state;
+  return {load, state, loadGuard};
+}
+async function loadWith(programResponse, analyticsResponse) {
+  const harness = loadHarness({getProgram: () => programResponse, programAnalytics: () => analyticsResponse});
+  await harness.load();
+  return harness.state;
 }
 const available = {program: {status: 'active'}, sessions: [{id: 'linked', workout_id: 'workout-1'}]};
 const metricsFailure = await loadWith(Promise.resolve(available), Promise.reject(new Error('metrics down')));
@@ -43,6 +59,22 @@ assert.equal(metricsFailure.loading, false);
 const programFailure = await loadWith(Promise.reject(new Error('program down')), Promise.resolve({adherence_percent: 85}));
 assert.equal(programFailure.program, undefined, 'failed program must not be invented from metrics');
 assert.equal(programFailure.loadError, 'program down');
+
+let resolveOldProgram;
+const oldProgram = new Promise(resolve => { resolveOldProgram = resolve; });
+const programResponses = [oldProgram, Promise.resolve({program: {id: 'new'}, sessions: []})];
+const analyticsResponses = [Promise.resolve({adherence_percent: 10}), Promise.resolve({adherence_percent: 90})];
+const guarded = loadHarness({
+  getProgram: () => programResponses.shift(),
+  programAnalytics: () => analyticsResponses.shift(),
+});
+const obsoleteLoad = guarded.load();
+const latestLoad = guarded.load();
+await latestLoad;
+resolveOldProgram({program: {id: 'old'}, sessions: []});
+await obsoleteLoad;
+assert.equal(guarded.state.program.program.id, 'new', 'obsolete program response must not replace the latest load');
+assert.equal(guarded.state.analytics.adherence_percent, 90, 'obsolete analytics must not replace the latest metrics');
 const noFalseZero = between(program, '<View style={styles.analytics}>', '</View>');
 assert.ok(noFalseZero.includes("'Нет данных'"), 'missing metrics must show no data');
 assert.ok(!noFalseZero.includes('??0'), 'missing metrics must not be displayed as 0%');
@@ -56,7 +88,9 @@ assert.match(previewRender, /onBack=\{\(\) => setStep\(previewOrigin === 'manual
 assert.match(app, /setPreviewOrigin\('programDetail'\)/, 'program preview must return to program details');
 assert.match(app, /onStart=\{next => \{void updateWorkout\(next\); setStep\('active'\);\}\}/, 'planned linked workout must start from its preview');
 assert.match(app, /setPreviewOrigin\('workoutDetail'\)/, 'history preview must return to workout details');
-assert.match(app, /onRepeat=\{next => \{setWorkout\(next\);setSelectedWorkoutId\(next\.workout\.id\)/, 'repeated workout must become the detail target before preview Back');
+const workoutDetailRender = between(app, "{step === 'workoutDetail'", "{step === 'nutrition'");
+assert.match(workoutDetailRender, /onRepeat=\{next => \{setWorkout\(next\);.*setPreviewOrigin\('workoutDetail'\)/, 'repeated workout preview must return to workout details');
+assert.doesNotMatch(workoutDetailRender, /onRepeat=\{next => \{[^}]*setSelectedWorkoutId\(next\.workout\.id\)/, 'repeat must retain the original workout detail target for Back');
 assert.match(app, /next\.workout\.status==='active'&&canStart/, 'existing active session resumes in active workout');
 assert.match(detail, /workout\.workout\.status === 'planned' && !archivedProgram \? <AppButton label="Открыть план и начать"/, 'only non-archived planned workouts may open the start preview');
 assert.match(detail, /item\.program\.status !== 'active' && item\.sessions\.some\(session => session\.workout_id === workoutId\)/, 'archived linked workout must be recognized in history');

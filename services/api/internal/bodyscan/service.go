@@ -76,17 +76,56 @@ func (s *Service) AddPhoto(ctx context.Context, userID, scanID, view, dataURL st
 	if mime == "image/png" {
 		ext = "png"
 	}
-	key := fmt.Sprintf("body-scans/%s/%s/%s.%s", userID, scanID, view, ext)
+	// A new capture must never overwrite the blob referenced by the existing
+	// photo row. In particular, a failed database write must leave that photo
+	// readable while the unreferenced new upload is removed.
+	key := fmt.Sprintf("body-scans/%s/%s/%s/%s.%s", userID, scanID, view, newID(), ext)
 	if err := s.media.Put(ctx, key, mime, data); err != nil {
 		return store.BodyScanDetails{}, err
 	}
 	photo := store.BodyScanPhoto{ID: newID(), ScanID: scanID, UserID: userID, View: view, StorageKey: key, MimeType: mime, Width: quality.Width, Height: quality.Height, Bytes: len(data), Brightness: quality.Brightness, Contrast: quality.Contrast, QualityStatus: quality.Status, QualityIssues: quality.Issues, CreatedAt: time.Now().UTC()}
 	out, err := s.store.UpsertBodyScanPhoto(ctx, photo)
 	if err != nil {
-		_ = s.media.Delete(ctx, key)
+		// An upsert can commit and then fail while reading its result. Check the
+		// row before deleting: a referenced private blob must remain available.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		current, checkErr := s.store.GetBodyScan(cleanupCtx, userID, scanID)
+		if checkErr != nil {
+			return store.BodyScanDetails{}, errors.Join(err, fmt.Errorf("verify photo before cleanup: %w", checkErr))
+		}
+		for _, existing := range current.Photos {
+			if existing.StorageKey == key {
+				if deleteErr := s.deleteReplacedPhoto(ctx, details.Photos, view, key); deleteErr != nil {
+					return store.BodyScanDetails{}, errors.Join(err, deleteErr)
+				}
+				return store.BodyScanDetails{}, err
+			}
+		}
+		if deleteErr := s.media.Delete(cleanupCtx, key); deleteErr != nil && !errors.Is(deleteErr, media.ErrNotFound) {
+			return store.BodyScanDetails{}, errors.Join(err, fmt.Errorf("cleanup new photo: %w", deleteErr))
+		}
 		return store.BodyScanDetails{}, err
 	}
+	if err := s.deleteReplacedPhoto(ctx, details.Photos, view, key); err != nil {
+		return out, err
+	}
 	return out, nil
+}
+
+func (s *Service) deleteReplacedPhoto(ctx context.Context, photos []store.BodyScanPhoto, view, key string) error {
+	for _, existing := range photos {
+		if existing.View == view && existing.StorageKey != key {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			deleteErr := s.media.Delete(cleanupCtx, existing.StorageKey)
+			cancel()
+			if deleteErr != nil && !errors.Is(deleteErr, media.ErrNotFound) {
+				return fmt.Errorf("delete replaced photo: %w", deleteErr)
+			}
+			break
+		}
+	}
+	return nil
 }
 
 func (s *Service) Delete(ctx context.Context, userID, scanID string) error {

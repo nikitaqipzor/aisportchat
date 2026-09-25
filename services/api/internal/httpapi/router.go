@@ -782,6 +782,15 @@ func (s *Server) programSessionWorkout(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	program, err := s.store.GetProgram(r.Context(), userID, session.ProgramID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if program.Program.Status != "active" {
+		writeServiceError(w, store.ErrInvalidState)
+		return
+	}
 	if session.WorkoutID != nil {
 		out, e := s.workoutService.Get(r.Context(), userID, *session.WorkoutID)
 		if e == nil {
@@ -799,12 +808,24 @@ func (s *Server) programSessionWorkout(w http.ResponseWriter, r *http.Request) {
 		volume *= recoveryVolume
 		intensity *= recoveryIntensity
 	}
-	out, err := s.workoutService.GenerateAdapted(r.Context(), userID, workouts.GenerateInput{Muscle: session.Muscle, Environment: session.Environment, LocalDate: date}, volume, intensity)
+	out, err := s.workoutService.GenerateAdaptedForSession(r.Context(), userID, session.ID, workouts.GenerateInput{Muscle: session.Muscle, Environment: session.Environment, LocalDate: date}, volume, intensity)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidState) {
+			// Another request may have linked this session while we generated its plan.
+			// Return that winner only while its parent program is still active.
+			if current, e := s.programService.Session(r.Context(), userID, session.ID); e == nil && current.WorkoutID != nil {
+				if parent, e := s.store.GetProgram(r.Context(), userID, current.ProgramID); e == nil && parent.Program.Status == "active" {
+					if linked, e := s.workoutService.Get(r.Context(), userID, *current.WorkoutID); e == nil {
+						writeJSON(w, http.StatusOK, map[string]any{"session": current, "workout": linked})
+						return
+					}
+				}
+			}
+		}
 		writeServiceError(w, err)
 		return
 	}
-	updated, err := s.programService.LinkWorkout(r.Context(), userID, session.ID, out.Workout.ID)
+	updated, err := s.programService.Session(r.Context(), userID, session.ID)
 	if err != nil {
 		writeServiceError(w, err)
 		return

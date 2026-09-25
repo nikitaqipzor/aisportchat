@@ -47,6 +47,7 @@ assert.match(setup, /Значения по умолчанию не показа�
 
 const input = fs.readFileSync('apps/mobile/src/screens/AIFoodInputScreen.tsx', 'utf8');
 assert.match(input, /parseVersion\.current\+=1;setBusy\(false\);setText\(value\);setDraft\(null\)/);
+assert.match(input, /setDraft\(null\);onTextChange\?\.\(value\)/);
 assert.match(input, /version===parseVersion\.current/);
 
 const photo = fs.readFileSync('apps/mobile/src/screens/FoodPhotoScreen.tsx', 'utf8');
