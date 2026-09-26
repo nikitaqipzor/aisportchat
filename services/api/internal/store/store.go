@@ -12,6 +12,7 @@ var (
 	ErrInvalidState = errors.New("invalid state")
 	ErrForbidden    = errors.New("forbidden")
 	ErrIdempotencyConflict = errors.New("idempotency key was already used for another request")
+	ErrMediaPending = errors.New("account deleted; media cleanup pending")
 )
 
 type User struct {
@@ -66,6 +67,12 @@ type OnboardingStatus struct {
 	GoalCompleted     bool `json:"goal_completed"`
 	TrainingCompleted bool `json:"training_completed"`
 	Completed         bool `json:"completed"`
+}
+
+type WorkoutHistoryFilter struct {
+	Limit, Offset int
+	Muscle, Environment, Status string
+	Favorite *bool
 }
 
 type RefreshSession struct {
@@ -328,6 +335,10 @@ type Store interface {
 	CreateUser(ctx context.Context, email, passwordHash string) (User, error)
 	FindUserByEmail(ctx context.Context, email string) (User, error)
 	FindUserByID(ctx context.Context, id string) (User, error)
+	// DeleteAccount atomically deletes the user and persists a media cleanup job.
+	// ErrMediaPending means the user is gone and an automatic retry is scheduled.
+	DeleteAccount(ctx context.Context, userID string, cleanup func(context.Context) error) error
+	RetryPendingMedia(ctx context.Context, cleanup func(context.Context, string) error) error
 
 	UpsertProfile(ctx context.Context, profile Profile) (Profile, error)
 	GetProfile(ctx context.Context, userID string) (Profile, error)
@@ -345,6 +356,7 @@ type Store interface {
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 
 	CreateWorkout(ctx context.Context, workout Workout, exercises []WorkoutExercise) (WorkoutDetails, error)
+	CreateProgramSessionWorkout(ctx context.Context, userID, sessionID string, workout Workout, exercises []WorkoutExercise) (WorkoutDetails, error)
 	GetWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	StartWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	UpsertWorkoutSet(ctx context.Context, userID, workoutID string, set WorkoutSet) (WorkoutDetails, error)
@@ -352,6 +364,7 @@ type Store interface {
 	CompleteWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	CancelWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	ListWorkouts(ctx context.Context, userID string, limit int) ([]WorkoutDetails, error)
+	ListWorkoutHistory(ctx context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error)
 	LastCompletedWorkout(ctx context.Context, userID, muscle, environment string) (WorkoutDetails, error)
 	LastExercisePerformance(ctx context.Context, userID, exerciseID string) (ExercisePerformance, error)
 	ActiveWorkout(ctx context.Context, userID string) (WorkoutDetails, error)

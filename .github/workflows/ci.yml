@@ -89,6 +89,7 @@ jobs:
           node scripts/test-mobile-nutrition-calendar.mjs
           node scripts/test-mobile-food-idempotency.mjs
           node scripts/test-mobile-devices-status.mjs
+          node scripts/test-mobile-device-display.mjs
           node scripts/test-mobile-design-accessibility.mjs
 
   android-internal:
@@ -111,6 +112,10 @@ jobs:
           "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
       - name: Install mobile dependencies
         run: ./scripts/ci-mobile-install.sh
+      - name: Mobile async behavior regressions
+        run: |
+          node apps/mobile/src/screens/ActiveWorkoutScreen.test.mjs
+          node apps/mobile/src/storage/offlineQueue.test.mjs
       - name: Typecheck
         working-directory: apps/mobile
         run: npm run typecheck

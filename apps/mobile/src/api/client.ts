@@ -131,6 +131,7 @@ export type MuscleStats = {
 
 export type HistoryFilters = {
   limit?: number;
+  offset?: number;
   muscle?: string;
   environment?: 'home' | 'gym' | 'band';
   status?: 'planned' | 'active' | 'completed' | 'cancelled';
@@ -636,7 +637,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function rawRequest<T>(path: string, options: RequestInit = {}, accessToken?: string): Promise<T> {
+async function rawRequest<T>(path: string, options: RequestInit = {}, accessToken?: string, returnStatus = false): Promise<T> {
   const controller = new AbortController();
   const upstream = options.signal;
   const abort = () => controller.abort(upstream?.reason);
@@ -653,6 +654,7 @@ async function rawRequest<T>(path: string, options: RequestInit = {}, accessToke
         ...(options.headers ?? {}),
       },
     });
+    if (returnStatus && response.ok) return response.status as T;
     return await parseResponse<T>(response);
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -726,6 +728,35 @@ async function request<T>(path: string, options: RequestInit = {}, accessToken?:
   }
 }
 
+async function requestPrivateImage(path: string, accessToken: string): Promise<string> {
+  const current = await getCurrentTokens();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    async function fetchImage(token: string) {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        method: 'GET', signal: controller.signal,
+        headers: {Authorization: `Bearer ${token}`},
+      });
+      if (!response.ok) throw new ApiError(response.status, `Не удалось загрузить фото (${response.status})`);
+      const blob = await response.blob();
+      if (!blob.type.startsWith('image/')) throw new Error('Сервер вернул неверный формат фото');
+      return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Не удалось открыть фото'));
+        reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('Не удалось открыть фото'));
+        reader.readAsDataURL(blob);
+      });
+    }
+    try { return await fetchImage(current?.access_token ?? accessToken); }
+    catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      const fresh = await rotateAccessToken(current?.refresh_token);
+      return fetchImage(fresh.access_token);
+    }
+  } finally { clearTimeout(timer); }
+}
+
 
 export type PoseLandmarkPayload = {x: number; y: number; z: number; visibility: number};
 export type PoseFramePayload = {timestamp_ms: number; landmarks: PoseLandmarkPayload[]};
@@ -775,6 +806,19 @@ export const api = {
   },
   logout(refreshToken: string) {
     return request<void>('/auth/logout', {method: 'POST', body: JSON.stringify({refresh_token: refreshToken})});
+  },
+  async deleteAccount(accessToken: string): Promise<204 | 202> {
+    const current = await getCurrentTokens();
+    let status: number;
+    try {
+      status = await rawRequest<number>('/auth/account', {method: 'DELETE'}, current?.access_token ?? accessToken, true);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      const fresh = await rotateAccessToken(current?.refresh_token);
+      status = await rawRequest<number>('/auth/account', {method: 'DELETE'}, fresh.access_token, true);
+    }
+    if (status !== 204 && status !== 202) throw new Error('Неожиданный ответ сервера при удалении аккаунта.');
+    return status;
   },
   onboardingStatus(accessToken: string) {
     return request<OnboardingStatus>('/onboarding/status', {method: 'GET'}, accessToken);
@@ -834,11 +878,12 @@ export const api = {
   workoutHistory(accessToken: string, filters: HistoryFilters = {}) {
     const query = new URLSearchParams();
     query.set('limit', String(filters.limit ?? 30));
+    if (filters.offset !== undefined) query.set('offset', String(filters.offset));
     if (filters.muscle) query.set('muscle', filters.muscle);
     if (filters.environment) query.set('environment', filters.environment);
     if (filters.status) query.set('status', filters.status);
     if (filters.favorite !== undefined) query.set('favorite', String(filters.favorite));
-    return request<{items: WorkoutView[]}>(`/workouts/history?${query.toString()}`, {method: 'GET'}, accessToken);
+    return request<{items: WorkoutView[]; has_more: boolean}>(`/workouts/history?${query.toString()}`, {method: 'GET'}, accessToken);
   },
   workoutProgressSummary(accessToken: string, days = 28) {
     return request<WorkoutProgressSummary>(`/workouts/progress-summary?days=${days}`, {method: 'GET'}, accessToken);
@@ -943,7 +988,7 @@ export const api = {
   searchFoods(accessToken: string, query: string, limit = 30) {
     return request<{items: FoodItem[]}>(`/nutrition/foods?query=${encodeURIComponent(query)}&limit=${limit}`, {method: 'GET'}, accessToken);
   },
-  logFood(accessToken: string, payload: {food_id: string; meal_type: FoodEntry['meal_type']; quantity_g: number; logged_at?: string}, timeZone?: string) {
+  logFood(accessToken: string, payload: {food_id: string; meal_type: FoodEntry['meal_type']; quantity_g: number; logged_at?: string; idempotency_key?: string}, timeZone?: string) {
     const query = timeZone ? `?time_zone=${encodeURIComponent(timeZone)}` : '';
     return request<NutritionDay>(`/nutrition/entries${query}`, {method: 'POST', body: JSON.stringify(payload)}, accessToken);
   },
@@ -957,8 +1002,8 @@ export const api = {
   foodByBarcode(accessToken: string, barcode: string) {
     return request<FoodItem>(`/nutrition/foods/barcode/${encodeURIComponent(barcode)}`, {method: 'GET'}, accessToken);
   },
-  repeatFoodEntry(accessToken: string, entryId: string, meal_type?: FoodEntry['meal_type']) {
-    return request<NutritionDay>(`/nutrition/entries/${entryId}/repeat`, {method: 'POST', body: JSON.stringify({meal_type})}, accessToken);
+  repeatFoodEntry(accessToken: string, entryId: string, meal_type?: FoodEntry['meal_type'], idempotency_key?: string) {
+    return request<NutritionDay>(`/nutrition/entries/${entryId}/repeat`, {method: 'POST', body: JSON.stringify({meal_type, idempotency_key})}, accessToken);
   },
   recipes(accessToken: string) {
     return request<{items: Recipe[]}>('/nutrition/recipes', {method: 'GET'}, accessToken);
@@ -990,6 +1035,9 @@ export const api = {
   },
   bodyScan(accessToken: string, scanId: string) {
     return request<BodyScanDetails>(`/body-scans/${scanId}`, {method: 'GET'}, accessToken);
+  },
+  bodyScanPhoto(accessToken: string, scanId: string, view: 'front'|'side'|'back') {
+    return requestPrivateImage(`/body-scans/${encodeURIComponent(scanId)}/photos/${view}`, accessToken);
   },
   deleteBodyScan(accessToken: string, scanId: string) {
     return request<void>(`/body-scans/${scanId}`, {method: 'DELETE'}, accessToken);

@@ -106,6 +106,42 @@ func (p *Postgres) GetProgramSession(ctx context.Context, userID, sessionID stri
 	}
 	return scanProgramSession(rows[0])
 }
+
+// CreateProgramSessionWorkout locks the parent program before its session, so
+// archive/replacement (which update the program row) cannot slip between the
+// active check and the workout insert/link. All writes commit together.
+func (p *Postgres) CreateProgramSessionWorkout(ctx context.Context, userID, sessionID string, w Workout, exercises []WorkoutExercise) (WorkoutDetails, error) {
+	var workoutID string
+	err := p.withTx(ctx, func() error {
+		rows, err := p.queryLocked(ctx, `SELECT p.status,s.status,s.workout_id::text FROM programs p JOIN program_sessions s ON s.program_id=p.id WHERE s.id=$1::uuid AND p.user_id=$2::uuid FOR UPDATE OF p,s`, sp(sessionID), sp(userID))
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return ErrNotFound
+		}
+		if val(rows[0], 0) != "active" || val(rows[0], 1) == "completed" || val(rows[0], 2) != "" || w.UserID != userID {
+			return ErrInvalidState
+		}
+		rows, err = p.queryLocked(ctx, `INSERT INTO workouts(user_id,status,environment,muscle,duration_minutes,total_volume) VALUES($1::uuid,$2,$3,$4,$5::int,0) RETURNING id::text`, sp(userID), sp(defaultString(w.Status, "planned")), sp(w.Environment), sp(w.Muscle), sp(strconv.Itoa(w.DurationMinutes)))
+		if err != nil {
+			return err
+		}
+		workoutID = val(rows[0], 0)
+		for i, ex := range exercises {
+			_, err = p.queryLocked(ctx, `INSERT INTO workout_exercises(workout_id,exercise_id,position,target_sets,target_reps_min,target_reps_max,target_weight,rest_seconds,progression_note) VALUES($1::uuid,$2,$3::int,$4::int,$5::int,$6::int,$7::numeric,$8::int,$9)`, sp(workoutID), sp(ex.ExerciseID), sp(strconv.Itoa(i+1)), sp(strconv.Itoa(ex.TargetSets)), sp(strconv.Itoa(ex.TargetRepsMin)), sp(strconv.Itoa(ex.TargetRepsMax)), fp(ex.TargetWeight), sp(strconv.Itoa(ex.RestSeconds)), sp(ex.ProgressionNote))
+			if err != nil {
+				return err
+			}
+		}
+		_, err = p.queryLocked(ctx, `UPDATE program_sessions SET workout_id=$1::uuid,status=CASE WHEN status='missed' THEN 'rescheduled' ELSE status END,adaptation_reason=CASE WHEN adaptation_reason='' THEN 'Тренировка создана по календарю программы.' ELSE adaptation_reason END WHERE id=$2::uuid`, sp(workoutID), sp(sessionID))
+		return err
+	})
+	if err != nil {
+		return WorkoutDetails{}, err
+	}
+	return p.GetWorkout(ctx, userID, workoutID)
+}
 func (p *Postgres) UpdateProgramSession(ctx context.Context, userID string, s ProgramSession) (ProgramSession, error) {
 	rows, err := p.query(ctx, `UPDATE program_sessions s SET planned_date=$1::date,status=$2,workout_id=$3::uuid,completed_at=$4::timestamptz,is_deload=$5::boolean,volume_multiplier=$6::numeric,intensity_multiplier=$7::numeric,planned_sets=$8::smallint,adaptation_reason=$9 FROM programs p WHERE s.id=$10::uuid AND p.id=s.program_id AND p.user_id=$11::uuid RETURNING s.id::text,s.program_id::text,s.week_number::text,s.day_index::text,s.planned_date::text,s.original_date::text,s.muscle,COALESCE(s.secondary_muscle,''),s.environment,s.status,s.workout_id::text,s.completed_at::text,s.is_deload::text,s.volume_multiplier::text,s.intensity_multiplier::text,s.planned_sets::text,s.adaptation_reason`, sp(s.PlannedDate.Format("2006-01-02")), sp(s.Status), s.WorkoutID, tp(s.CompletedAt), sp(strconv.FormatBool(s.IsDeload)), sp(strconv.FormatFloat(s.VolumeMultiplier, 'f', 2, 64)), sp(strconv.FormatFloat(s.IntensityMultiplier, 'f', 2, 64)), sp(strconv.Itoa(s.PlannedSets)), sp(s.AdaptationReason), sp(s.ID), sp(userID))
 	if err != nil {

@@ -80,7 +80,14 @@ node "$ROOT/scripts/test-mobile-session-scope.mjs"
 node "$ROOT/scripts/test-mobile-technique-mapping.mjs"
 node "$ROOT/scripts/test-mobile-technique-readiness.mjs"
 node "$ROOT/scripts/test-mobile-health-passive-sync.mjs"
+node "$ROOT/scripts/test-mobile-device-display.mjs"
 node "$ROOT/scripts/test-mobile-rest-timer.mjs"
+if [ -d "$ROOT/apps/mobile/node_modules/typescript" ]; then
+  node "$ROOT/apps/mobile/src/screens/ActiveWorkoutScreen.test.mjs"
+  node "$ROOT/apps/mobile/src/storage/offlineQueue.test.mjs"
+else
+  echo "SKIP mobile async regressions: mobile TypeScript dependency not installed"
+fi
 node "$ROOT/scripts/test-mobile-analytics-races.mjs"
 node "$ROOT/scripts/test-mobile-home-reliability.mjs"
 node "$ROOT/scripts/test-mobile-nutrition-regressions.mjs"

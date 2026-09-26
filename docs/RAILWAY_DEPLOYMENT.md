@@ -30,6 +30,15 @@ OPENAI_MODEL=gpt-5.6-terra
 Generate the token secret locally with `openssl rand -hex 32`. Do not commit it.
 Railway injects `PORT`; the API prefers it over the local `API_PORT` fallback.
 
+The authentication limiter uses the direct peer address unless the optional
+`AUTH_TRUSTED_PROXY_CIDRS` variable explicitly trusts the ingress proxy. Determine and
+verify the provider's actual source range before setting it; never trust every
+private address or accept client-supplied `X-Forwarded-For` directly. Test two
+separate phones behind the published URL and verify that one client's attempts
+do not consume the other's IP bucket. The Docker Compose staging topology pins
+Caddy to `172.30.239.10` and trusts that address only. Caddy explicitly replaces
+incoming `X-Forwarded-For` with its direct client peer before proxying.
+
 Redis is not required by the current API implementation. Add it only when a
 runtime feature starts consuming `REDIS_ADDR`.
 

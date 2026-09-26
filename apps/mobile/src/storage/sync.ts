@@ -1,7 +1,6 @@
 import {api} from '../api/client';
 import type {AuthTokens, FinishResult, WorkoutView} from '../api/client';
 import {sessionStorage} from './session';
-import type {OfflineOperation} from './session';
 
 export type SyncResult = {
   tokens: AuthTokens;
@@ -10,18 +9,25 @@ export type SyncResult = {
   remaining: number;
 };
 
-export async function flushOfflineQueue(tokens: AuthTokens): Promise<SyncResult> {
+// App resume and screen actions may start sync at the same time.
+let previousFlush: Promise<void> = Promise.resolve();
+
+export function flushOfflineQueue(tokens: AuthTokens): Promise<SyncResult> {
+  const result = previousFlush.then(() => flushOnce(tokens));
+  previousFlush = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+async function flushOnce(tokens: AuthTokens): Promise<SyncResult> {
   const currentTokens = tokens;
   const ownerAtStart = await sessionStorage.currentUserId();
   const ownerIsCurrent = async () => ownerAtStart !== undefined && (await sessionStorage.currentUserId()) === ownerAtStart;
   const queue = await sessionStorage.loadQueue();
-  const remaining: OfflineOperation[] = [];
   let latestWorkout: WorkoutView | undefined;
   let finish: FinishResult | undefined;
 
-  for (let index = 0; index < queue.length; index += 1) {
+  for (const operation of queue) {
     if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
-    const operation = queue[index];
     try {
       if (operation.type === 'log_set') {
         latestWorkout = await api.logSet(currentTokens.access_token, operation.workoutId, operation.payload);
@@ -32,16 +38,21 @@ export async function flushOfflineQueue(tokens: AuthTokens): Promise<SyncResult>
         latestWorkout = await api.cancelWorkout(currentTokens.access_token, operation.workoutId);
       }
       if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
-    } catch (error) {
-      remaining.push(...queue.slice(index));
+      // Delete only the acknowledged ID. A newer enqueue of this same set has a
+      // different ID and must survive even if it landed during the network call.
+      const remaining = await sessionStorage.removeProcessedQueueOperations(ownerAtStart!, [operation.id]);
+      if (remaining === null) return {tokens: currentTokens, remaining: queue.length};
+    } catch {
       break;
     }
   }
 
   if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
-  await sessionStorage.saveQueue(remaining);
-  if (latestWorkout) {
-    await sessionStorage.saveActiveWorkout(latestWorkout.workout.status === 'active' ? latestWorkout : null);
+  // A server snapshot taken before a concurrent offline set must not replace
+  // its optimistic local workout (or be sent to App as an older workout).
+  if (latestWorkout && !await sessionStorage.saveSyncedWorkoutIfNoPendingSet(ownerAtStart!, latestWorkout)) {
+    latestWorkout = undefined;
   }
-  return {tokens: currentTokens, workout: latestWorkout, finish, remaining: remaining.length};
+  const pending = await sessionStorage.loadQueue();
+  return {tokens: currentTokens, workout: latestWorkout, finish, remaining: pending.length};
 }

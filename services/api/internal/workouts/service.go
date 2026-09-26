@@ -74,6 +74,7 @@ type ProgressionRecommendation struct {
 
 type HistoryFilter struct {
 	Limit       int
+	Offset      int
 	Muscle      string
 	Environment string
 	Status      string
@@ -118,7 +119,7 @@ func NewService(st store.Store, engine *Engine) *Service {
 }
 
 func (s *Service) Generate(ctx context.Context, userID string, in GenerateInput) (WorkoutView, error) {
-	return s.generate(ctx, userID, in, 1, 1)
+	return s.generate(ctx, userID, in, 1, 1, "")
 }
 
 // CreateManual persists user-selected workout facts. It deliberately validates
@@ -168,10 +169,28 @@ func (s *Service) GenerateAdapted(ctx context.Context, userID string, in Generat
 	if intensityMultiplier > 1.1 {
 		intensityMultiplier = 1.1
 	}
-	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier)
+	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier, "")
 }
 
-func (s *Service) generate(ctx context.Context, userID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64) (WorkoutView, error) {
+// GenerateAdaptedForSession persists the generated workout and its program link
+// atomically. The public GenerateAdapted API remains unchanged.
+func (s *Service) GenerateAdaptedForSession(ctx context.Context, userID, sessionID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64) (WorkoutView, error) {
+	if volumeMultiplier < 0.4 {
+		volumeMultiplier = 0.4
+	}
+	if volumeMultiplier > 1.2 {
+		volumeMultiplier = 1.2
+	}
+	if intensityMultiplier < 0.7 {
+		intensityMultiplier = 0.7
+	}
+	if intensityMultiplier > 1.1 {
+		intensityMultiplier = 1.1
+	}
+	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier, sessionID)
+}
+
+func (s *Service) generate(ctx context.Context, userID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64, sessionID string) (WorkoutView, error) {
 	status, err := s.store.GetOnboardingStatus(ctx, userID)
 	if err != nil || !status.Completed {
 		return WorkoutView{}, errors.New("complete onboarding before generating a workout")
@@ -224,10 +243,16 @@ func (s *Service) generate(ctx context.Context, userID string, in GenerateInput,
 		})
 	}
 
-	details, err := s.store.CreateWorkout(ctx, store.Workout{
+	workout := store.Workout{
 		UserID: userID, Muscle: generated.Muscle, Environment: generated.Environment,
 		Status: "planned", DurationMinutes: generated.DurationMinutes,
-	}, rows)
+	}
+	var details store.WorkoutDetails
+	if sessionID != "" {
+		details, err = s.store.CreateProgramSessionWorkout(ctx, userID, sessionID, workout, rows)
+	} else {
+		details, err = s.store.CreateWorkout(ctx, workout, rows)
+	}
 	if err != nil {
 		return WorkoutView{}, err
 	}
@@ -382,40 +407,31 @@ func (s *Service) Finish(ctx context.Context, userID, workoutID string) (FinishR
 }
 
 func (s *Service) History(ctx context.Context, userID string, filter HistoryFilter) ([]WorkoutView, error) {
+	page, _, err := s.HistoryPage(ctx, userID, filter)
+	return page, err
+}
+
+func (s *Service) HistoryPage(ctx context.Context, userID string, filter HistoryFilter) ([]WorkoutView, bool, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	// Pull enough rows before applying MVP filters in the domain layer. This keeps Store simple
-	// and lets us move filtering into SQL later without changing the HTTP contract.
-	items, err := s.store.ListWorkouts(ctx, userID, 100)
+	if filter.Offset < 0 { filter.Offset = 0 }
+	items, err := s.store.ListWorkoutHistory(ctx, userID, store.WorkoutHistoryFilter{Limit: limit + 1, Offset: filter.Offset, Muscle: filter.Muscle, Environment: filter.Environment, Status: filter.Status, Favorite: filter.Favorite})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	out := make([]WorkoutView, 0, min(limit, len(items)))
+	hasMore := len(items) > limit
+	if hasMore { items = items[:limit] }
+	out := make([]WorkoutView, 0, len(items))
 	for _, item := range items {
-		if filter.Muscle != "" && item.Workout.Muscle != filter.Muscle {
-			continue
-		}
-		if filter.Environment != "" && item.Workout.Environment != filter.Environment {
-			continue
-		}
-		if filter.Status != "" && item.Workout.Status != filter.Status {
-			continue
-		}
-		if filter.Favorite != nil && item.Workout.Favorite != *filter.Favorite {
-			continue
-		}
 		view, err := s.view(ctx, userID, item)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, view)
-		if len(out) >= limit {
-			break
-		}
 	}
-	return out, nil
+	return out, hasMore, nil
 }
 
 func (s *Service) Favorite(ctx context.Context, userID, workoutID string, favorite bool) (WorkoutView, error) {

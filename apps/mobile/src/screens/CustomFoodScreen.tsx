@@ -9,6 +9,7 @@ const fields = [
   ['carbs','Углеводы / 100 г'], ['fiber','Клетчатка / 100 г'], ['serving','Порция, г'],
 ] as const;
 const parseNumber=(value:string)=>Number(value.replace(',','.'));
+const limits:Record<(typeof fields)[number][0],number>={kcal:1000,protein:100,fat:100,carbs:100,fiber:100,serving:5000};
 
 export function CustomFoodScreen({accessToken,onBack,onSaved}:{accessToken:string;onBack:()=>void;onSaved:(food:FoodItem)=>void}) {
   const [name,setName]=useState(''); const [brand,setBrand]=useState(''); const [barcode,setBarcode]=useState('');
@@ -18,7 +19,7 @@ export function CustomFoodScreen({accessToken,onBack,onSaved}:{accessToken:strin
     const errors:Record<string,string>={};
     if(name.trim().length<2)errors.name='Введите название не короче 2 символов.';
     if(barcode.trim()&&!/^\d{8,14}$/.test(barcode.trim()))errors.barcode='Штрихкод должен содержать 8–14 цифр.';
-    fields.forEach(([key])=>{const n=parseNumber(values[key]??'');const max=key==='kcal'?2000:5000;if(!Number.isFinite(n)||n<0||n>max)errors[key]=`Введите число от 0 до ${max}.`;});
+    fields.forEach(([key])=>{const raw=values[key]?.trim()??'';const n=parseNumber(raw);const max=limits[key];if(!raw||!Number.isFinite(n)||n<0||n>max)errors[key]=`Введите число от 0 до ${max}.`;});
     if(parseNumber(values.serving)<=0)errors.serving='Порция должна быть больше 0 г.';
     return errors;
   },[barcode,name,values]);
@@ -34,7 +35,7 @@ export function CustomFoodScreen({accessToken,onBack,onSaved}:{accessToken:strin
     <Pressable accessibilityRole="button" accessibilityLabel="Вернуться к поиску" hitSlop={8} onPress={onBack} style={styles.navButton}><Text style={styles.back}>← Поиск</Text></Pressable>
     <Text style={styles.kicker}>СВОЙ ПРОДУКТ</Text><Text accessibilityRole="header" style={styles.title}>Добавить продукт</Text>
     <Text style={styles.subtitle}>Перенесите пищевую ценность с упаковки. Мы не будем заменять введённые значения оценкой AI.</Text>
-    <Text style={styles.label}>Название *</Text><TextInput accessibilityLabel="Название продукта" value={name} onChangeText={setName} maxLength={100} placeholder="Например, домашние сырники" placeholderTextColor={colors.textMuted} style={[styles.input,fieldError('name')&&styles.invalid]}/>{fieldError('name')?<Text style={styles.fieldError}>{fieldError('name')}</Text>:null}
+    <Text style={styles.label}>Название *</Text><TextInput accessibilityLabel="Название продукта" value={name} onChangeText={setName} maxLength={120} placeholder="Например, домашние сырники" placeholderTextColor={colors.textMuted} style={[styles.input,fieldError('name')&&styles.invalid]}/>{fieldError('name')?<Text style={styles.fieldError}>{fieldError('name')}</Text>:null}
     <Text style={styles.label}>Бренд</Text><TextInput accessibilityLabel="Бренд продукта" value={brand} onChangeText={setBrand} maxLength={100} placeholder="Необязательно" placeholderTextColor={colors.textMuted} style={styles.input}/>
     <Text style={styles.label}>Штрихкод</Text><TextInput accessibilityLabel="Штрихкод продукта" value={barcode} onChangeText={setBarcode} keyboardType="number-pad" maxLength={14} placeholder="8–14 цифр, необязательно" placeholderTextColor={colors.textMuted} style={[styles.input,fieldError('barcode')&&styles.invalid]}/>{fieldError('barcode')?<Text style={styles.fieldError}>{fieldError('barcode')}</Text>:null}
     <View style={styles.grid}>{fields.map(([key,title])=><View key={key} style={styles.field}><Text style={styles.label}>{title}</Text><TextInput accessibilityLabel={title} value={values[key]} onChangeText={v=>setValues(current=>({...current,[key]:v}))} keyboardType="decimal-pad" maxLength={8} style={[styles.input,fieldError(key)&&styles.invalid]}/>{fieldError(key)?<Text style={styles.fieldError}>{fieldError(key)}</Text>:null}</View>)}</View>

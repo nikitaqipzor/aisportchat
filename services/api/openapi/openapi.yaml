@@ -75,6 +75,30 @@ paths:
       responses:
         '204':
           description: Logged out
+  /auth/account:
+    delete:
+      operationId: deleteAccount
+      summary: Permanently delete the authenticated account
+      description: Removes the account, refresh sessions, all linked fitness and health data, and locally stored body scan photos. Existing access tokens are rejected after deletion. A server error leaves the deletion unconfirmed and the client should retry; backups follow the deployment retention policy.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Account and user-owned data deleted
+        '202':
+          description: Account and database records deleted; private media cleanup queued for automatic retry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: media_cleanup_pending
+        '401':
+          description: Missing, invalid, expired or deleted account bearer token
+        '500':
+          description: Deletion could not be completed; retry later
   /profile:
     get:
       operationId: getProfile
@@ -356,6 +380,13 @@ paths:
           maximum: 100
           default: 20
       - in: query
+        name: offset
+        description: Number of matching workouts to skip, ordered by creation date descending.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - in: query
         name: muscle
         schema:
           type: string
@@ -383,6 +414,18 @@ paths:
       responses:
         '200':
           description: User workout history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkoutView'
+                  has_more:
+                    type: boolean
   /workouts/progress-summary:
     get:
       operationId: workoutProgressSummary
@@ -693,6 +736,8 @@ paths:
             are applied to actual targets
         '200':
           description: Existing linked workout returned idempotently
+        '409':
+          description: Session belongs to a program that is no longer active
   /programs/sessions/{session_id}/reschedule:
     post:
       operationId: rescheduleProgramSession
@@ -922,6 +967,24 @@ paths:
   /nutrition/entries/{entry_id}/repeat:
     post:
       operationId: repeatFoodEntry
+      description: Repeats an entry. Reusing an idempotency_key for the same action returns its existing result; use a new key for another repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                meal_type:
+                  type: string
+                  enum: [breakfast, lunch, dinner, snack]
+                logged_at:
+                  type: string
+                  format: date-time
+                idempotency_key:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
       security:
       - bearerAuth: []
       parameters:
@@ -2796,6 +2859,11 @@ components:
         logged_at:
           type: string
           format: date-time
+        idempotency_key:
+          type: string
+          description: Stable key for retries of this write; use a new key for a separate meal.
+          minLength: 8
+          maxLength: 128
     FoodEntry:
       type: object
       required:

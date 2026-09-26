@@ -86,6 +86,7 @@ func NewServerWithAIAndMedia(st store.Store, tm *auth.TokenManager, aiProvider a
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	mux.Handle("DELETE /api/v1/auth/account", s.requireAuth(http.HandlerFunc(s.deleteAccount)))
 
 	mux.HandleFunc("GET /api/v1/muscles", s.listMuscles)
 	mux.Handle("GET /api/v1/muscles/{muscle_id}/stats", s.requireAuth(http.HandlerFunc(s.muscleStats)))
@@ -653,6 +654,9 @@ func (s *Server) cancelWorkout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workoutHistory(w http.ResponseWriter, r *http.Request) {
 	filter := workouts.HistoryFilter{Limit: 20}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed >= 0 { filter.Offset = parsed }
+	}
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil {
 			filter.Limit = parsed
@@ -666,12 +670,12 @@ func (s *Server) workoutHistory(w http.ResponseWriter, r *http.Request) {
 			filter.Favorite = &parsed
 		}
 	}
-	out, err := s.workoutService.History(r.Context(), currentUserID(r.Context()), filter)
+	out, hasMore, err := s.workoutService.HistoryPage(r.Context(), currentUserID(r.Context()), filter)
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "has_more": hasMore})
 }
 
 func (s *Server) workoutProgressSummary(w http.ResponseWriter, r *http.Request) {
@@ -779,6 +783,15 @@ func (s *Server) programSessionWorkout(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	program, err := s.store.GetProgram(r.Context(), userID, session.ProgramID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	if program.Program.Status != "active" {
+		writeServiceError(w, store.ErrInvalidState)
+		return
+	}
 	if session.WorkoutID != nil {
 		out, e := s.workoutService.Get(r.Context(), userID, *session.WorkoutID)
 		if e == nil {
@@ -796,12 +809,24 @@ func (s *Server) programSessionWorkout(w http.ResponseWriter, r *http.Request) {
 		volume *= recoveryVolume
 		intensity *= recoveryIntensity
 	}
-	out, err := s.workoutService.GenerateAdapted(r.Context(), userID, workouts.GenerateInput{Muscle: session.Muscle, Environment: session.Environment, LocalDate: date}, volume, intensity)
+	out, err := s.workoutService.GenerateAdaptedForSession(r.Context(), userID, session.ID, workouts.GenerateInput{Muscle: session.Muscle, Environment: session.Environment, LocalDate: date}, volume, intensity)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidState) {
+			// Another request may have linked this session while we generated its plan.
+			// Return that winner only while its parent program is still active.
+			if current, e := s.programService.Session(r.Context(), userID, session.ID); e == nil && current.WorkoutID != nil {
+				if parent, e := s.store.GetProgram(r.Context(), userID, current.ProgramID); e == nil && parent.Program.Status == "active" {
+					if linked, e := s.workoutService.Get(r.Context(), userID, *current.WorkoutID); e == nil {
+						writeJSON(w, http.StatusOK, map[string]any{"session": current, "workout": linked})
+						return
+					}
+				}
+			}
+		}
 		writeServiceError(w, err)
 		return
 	}
-	updated, err := s.programService.LinkWorkout(r.Context(), userID, session.ID, out.Workout.ID)
+	updated, err := s.programService.Session(r.Context(), userID, session.ID)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -959,11 +984,12 @@ func (s *Server) logFoodEntry(w http.ResponseWriter, r *http.Request) {
 		MealType  string     `json:"meal_type"`
 		QuantityG float64    `json:"quantity_g"`
 		LoggedAt  *time.Time `json:"logged_at,omitempty"`
+		IdempotencyKey string `json:"idempotency_key,omitempty"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.nutritionService.LogFoodInLocation(r.Context(), currentUserID(r.Context()), in.FoodID, in.MealType, in.QuantityG, in.LoggedAt, loc)
+	out, err := s.nutritionService.LogFoodBatchInLocation(r.Context(), currentUserID(r.Context()), in.MealType, []nutrition.FoodBatchItem{{FoodID:in.FoodID, QuantityG:in.QuantityG}}, in.LoggedAt, in.IdempotencyKey, "manual", "", loc)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1005,11 +1031,12 @@ func (s *Server) repeatFoodEntry(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		MealType string     `json:"meal_type,omitempty"`
 		LoggedAt *time.Time `json:"logged_at,omitempty"`
+		IdempotencyKey string `json:"idempotency_key,omitempty"`
 	}
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.nutritionService.RepeatEntry(r.Context(), currentUserID(r.Context()), r.PathValue("entry_id"), in.MealType, in.LoggedAt)
+	out, err := s.nutritionService.RepeatEntryWithKey(r.Context(), currentUserID(r.Context()), r.PathValue("entry_id"), in.MealType, in.LoggedAt, in.IdempotencyKey)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -1210,6 +1237,14 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		claims, err := s.tokens.ParseAccessToken(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid or expired access token")
+			return
+		}
+		if _, err := s.store.FindUserByID(r.Context(), claims.Sub); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusUnauthorized, "invalid or expired access token")
+			} else {
+				writeError(w, http.StatusInternalServerError, "account lookup failed")
+			}
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, claims.Sub)

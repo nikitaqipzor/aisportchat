@@ -561,7 +561,7 @@ func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (Wo
 }
 
 func (p *Postgres) StartWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error) {
-	rows, err := p.query(ctx, `UPDATE workouts SET status='active',started_at=COALESCE(started_at,now()) WHERE id=$1::uuid AND user_id=$2::uuid AND status='planned' RETURNING id::text`, sp(workoutID), sp(userID))
+	rows, err := p.query(ctx, `UPDATE workouts w SET status='active',started_at=COALESCE(started_at,now()) WHERE w.id=$1::uuid AND w.user_id=$2::uuid AND w.status='planned' AND NOT EXISTS (SELECT 1 FROM program_sessions s JOIN programs p ON p.id=s.program_id WHERE s.workout_id=w.id AND p.status<>'active') RETURNING w.id::text`, sp(workoutID), sp(userID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -634,6 +634,19 @@ func (p *Postgres) ListWorkouts(ctx context.Context, userID string, limit int) (
 			return nil, er
 		}
 		out = append(out, d)
+	}
+	return out, nil
+}
+
+func (p *Postgres) ListWorkoutHistory(ctx context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error) {
+	var favorite *string
+	if filter.Favorite != nil { favorite = sp(strconv.FormatBool(*filter.Favorite)) }
+	rows, err := p.query(ctx, `SELECT id::text FROM workouts WHERE user_id=$1::uuid AND ($2='' OR muscle=$2) AND ($3='' OR environment=$3) AND ($4='' OR status=$4) AND ($5::text IS NULL OR is_favorite=$5::boolean) ORDER BY created_at DESC,id DESC LIMIT $6::int OFFSET $7::int`, sp(userID), sp(filter.Muscle), sp(filter.Environment), sp(filter.Status), favorite, sp(strconv.Itoa(filter.Limit)), sp(strconv.Itoa(filter.Offset)))
+	if err != nil { return nil, err }
+	out := make([]WorkoutDetails, 0, len(rows))
+	for _, row := range rows {
+		item, err := p.GetWorkout(ctx, userID, val(row, 0)); if err != nil { return nil, err }
+		out = append(out, item)
 	}
 	return out, nil
 }

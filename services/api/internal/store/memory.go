@@ -37,6 +37,7 @@ type Memory struct {
 	healthSnapshots   map[string]HealthDailySnapshot
 	programs          map[string]Program
 	programSessions   map[string][]ProgramSession
+	pendingMedia      map[string]bool
 }
 
 func NewMemory() *Memory {
@@ -65,6 +66,7 @@ func NewMemory() *Memory {
 		healthSnapshots:   map[string]HealthDailySnapshot{},
 		programs:          map[string]Program{},
 		programSessions:   map[string][]ProgramSession{},
+		pendingMedia:      map[string]bool{},
 	}
 }
 
@@ -318,6 +320,56 @@ func (m *Memory) CreateWorkout(_ context.Context, w Workout, exercises []Workout
 	return m.detailsLocked(w.ID), nil
 }
 
+// CreateProgramSessionWorkout serializes archive/replacement with creation and
+// linking under the same lock. A duplicate request never inserts a workout.
+func (m *Memory) CreateProgramSessionWorkout(_ context.Context, userID, sessionID string, w Workout, exercises []WorkoutExercise) (WorkoutDetails, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for programID, sessions := range m.programSessions {
+		program := m.programs[programID]
+		if program.UserID != userID {
+			continue
+		}
+		for i := range sessions {
+			if sessions[i].ID != sessionID {
+				continue
+			}
+			if program.Status != "active" || sessions[i].WorkoutID != nil || sessions[i].Status == "completed" || w.UserID != userID {
+				return WorkoutDetails{}, ErrInvalidState
+			}
+			if w.ID == "" {
+				w.ID = newID()
+			}
+			if w.Status == "" {
+				w.Status = "planned"
+			}
+			w.CreatedAt = time.Now().UTC()
+			for j := range exercises {
+				if exercises[j].ID == "" {
+					exercises[j].ID = newID()
+				}
+				exercises[j].WorkoutID = w.ID
+				exercises[j].Position = j + 1
+			}
+			m.workouts[w.ID] = w
+			m.workoutEx[w.ID] = cloneWorkoutExercises(exercises)
+			m.workoutSets[w.ID] = nil
+			sessions[i].WorkoutID = &w.ID
+			if sessions[i].Status == "missed" {
+				sessions[i].Status = "rescheduled"
+			}
+			if sessions[i].AdaptationReason == "" {
+				sessions[i].AdaptationReason = "Тренировка создана по календарю программы."
+			}
+			m.programSessions[programID] = sessions
+			program.UpdatedAt = time.Now().UTC()
+			m.programs[programID] = program
+			return m.detailsLocked(w.ID), nil
+		}
+	}
+	return WorkoutDetails{}, ErrNotFound
+}
+
 func (m *Memory) GetWorkout(_ context.Context, userID, workoutID string) (WorkoutDetails, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -343,6 +395,13 @@ func (m *Memory) StartWorkout(_ context.Context, userID, workoutID string) (Work
 	}
 	if w.Status != "planned" {
 		return WorkoutDetails{}, ErrInvalidState
+	}
+	for programID, sessions := range m.programSessions {
+		for _, session := range sessions {
+			if session.WorkoutID != nil && *session.WorkoutID == workoutID && m.programs[programID].Status != "active" {
+				return WorkoutDetails{}, ErrInvalidState
+			}
+		}
 	}
 	now := time.Now().UTC()
 	w.Status = "active"
@@ -532,6 +591,26 @@ func (m *Memory) ListWorkouts(_ context.Context, userID string, limit int) ([]Wo
 	for _, w := range items {
 		out = append(out, m.detailsLocked(w.ID))
 	}
+	return out, nil
+}
+
+func (m *Memory) ListWorkoutHistory(_ context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	items := make([]Workout, 0)
+	for _, w := range m.workouts {
+		if w.UserID != userID || filter.Muscle != "" && w.Muscle != filter.Muscle || filter.Environment != "" && w.Environment != filter.Environment || filter.Status != "" && w.Status != filter.Status || filter.Favorite != nil && w.Favorite != *filter.Favorite { continue }
+		items = append(items, w)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) { return items[i].ID > items[j].ID }
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	start := filter.Offset
+	if start < 0 { start = 0 }; if start > len(items) { start = len(items) }
+	end := start + filter.Limit; if end > len(items) { end = len(items) }
+	out := make([]WorkoutDetails, 0, end-start)
+	for _, item := range items[start:end] { out = append(out, m.detailsLocked(item.ID)) }
 	return out, nil
 }
 

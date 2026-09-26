@@ -84,15 +84,34 @@ func (p *Postgres) UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto)
 		photo.CreatedAt = time.Now().UTC()
 	}
 	issues := strings.Join(photo.QualityIssues, "|")
-	rows, err := p.query(ctx, `INSERT INTO body_scan_photos(id,scan_id,view,storage_key,mime_type,width,height,bytes,brightness,contrast,quality_status,quality_issues,created_at)
+	// Lock the parent scan until the photo row is committed. CompleteBodyScan's
+	// UPDATE acquires the same row lock, so a completed scan cannot race past
+	// this draft/owner check and accept a replacement afterwards.
+	err := p.withTx(ctx, func() error {
+		owner, err := p.queryLocked(ctx, `SELECT status FROM body_scans WHERE id=$1::uuid AND user_id=$2::uuid FOR UPDATE`, sp(photo.ScanID), sp(photo.UserID))
+		if err != nil {
+			return err
+		}
+		if len(owner) == 0 {
+			return ErrNotFound
+		}
+		if val(owner[0], 0) != "draft" {
+			return ErrInvalidState
+		}
+		rows, err := p.queryLocked(ctx, `INSERT INTO body_scan_photos(id,scan_id,view,storage_key,mime_type,width,height,bytes,brightness,contrast,quality_status,quality_issues,created_at)
 VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::int,$7::int,$8::int,$9::numeric,$10::numeric,$11,$12,$13::timestamptz)
 ON CONFLICT(scan_id,view) DO UPDATE SET id=EXCLUDED.id,storage_key=EXCLUDED.storage_key,mime_type=EXCLUDED.mime_type,width=EXCLUDED.width,height=EXCLUDED.height,bytes=EXCLUDED.bytes,brightness=EXCLUDED.brightness,contrast=EXCLUDED.contrast,quality_status=EXCLUDED.quality_status,quality_issues=EXCLUDED.quality_issues,created_at=EXCLUDED.created_at
 RETURNING id::text`, sp(photo.ID), sp(photo.ScanID), sp(photo.View), sp(photo.StorageKey), sp(photo.MimeType), sp(strconv.Itoa(photo.Width)), sp(strconv.Itoa(photo.Height)), sp(strconv.Itoa(photo.Bytes)), sp(strconv.FormatFloat(photo.Brightness, 'f', 2, 64)), sp(strconv.FormatFloat(photo.Contrast, 'f', 2, 64)), sp(photo.QualityStatus), sp(issues), sp(photo.CreatedAt.Format(time.RFC3339Nano)))
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 	if err != nil {
 		return BodyScanDetails{}, err
-	}
-	if len(rows) == 0 {
-		return BodyScanDetails{}, ErrNotFound
 	}
 	return p.GetBodyScan(ctx, photo.UserID, photo.ScanID)
 }

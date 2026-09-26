@@ -1,26 +1,31 @@
-import React,{useCallback,useEffect,useMemo,useState} from 'react';
+import React,{useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {ActivityIndicator,Alert,Pressable,ScrollView,StyleSheet,Text,View} from 'react-native';
 import {api,ProgramAnalytics,ProgramSession,TrainingProgram,WorkoutView} from '../api/client';
 import {muscleMeta,MuscleId} from '../domain/muscles';
-import {currentLocalDate} from '../domain/date';
+import {currentLocalDate,formatCalendarDate} from '../domain/date';
 import {AppButton} from '../components/AppButton';
 import {colors,control,radius,spacing} from '../theme/tokens';
+import {LatestRequestGuard} from '../domain/latestRequest';
 
 const statusLabel:Record<string,string>={planned:'Запланировано',rescheduled:'Перенесено',missed:'Пропущено',completed:'Выполнено',skipped:'Пропущено'};
 function muscleTitle(id:string){return (muscleMeta as Record<string,{title:string}>)[id]?.title ?? id}
 
 export function ProgramDetailScreen({accessToken,programId,onBack,onWorkout,onArchived}:{accessToken:string;programId:string;onBack:()=>void;onWorkout:(workout:WorkoutView,muscle:MuscleId,canStart:boolean)=>void;onArchived:()=>void}){
  const [program,setProgram]=useState<TrainingProgram>();const [analytics,setAnalytics]=useState<ProgramAnalytics>();const [loading,setLoading]=useState(true);const [busy,setBusy]=useState('');const [message,setMessage]=useState('');const [loadError,setLoadError]=useState('');const [analyticsError,setAnalyticsError]=useState('');
+ const loadGuard=useRef(new LatestRequestGuard());
  const load=useCallback(async()=>{
-  setLoading(true);setLoadError('');setAnalyticsError('');setAnalytics(undefined);
+  const isLatest=loadGuard.current.begin();
+  setLoading(true);setProgram(undefined);setLoadError('');setAnalyticsError('');setAnalytics(undefined);
   const [programResult,analyticsResult]=await Promise.allSettled([api.getProgram(accessToken,programId),api.programAnalytics(accessToken,programId)]);
+  if(!isLatest())return;
   if(programResult.status==='fulfilled')setProgram(programResult.value);
-  else setLoadError(programResult.reason instanceof Error?programResult.reason.message:'Не удалось загрузить программу.');
+  else {setProgram(undefined);setLoadError(programResult.reason instanceof Error?programResult.reason.message:'Не удалось загрузить программу.');}
   if(analyticsResult.status==='fulfilled')setAnalytics(analyticsResult.value);
   else setAnalyticsError('Аналитика временно недоступна. План тренировок можно открывать и выполнять.');
   setLoading(false);
  },[accessToken,programId]);
- useEffect(()=>{void load()},[load]);
+ useEffect(()=>{void load();return()=>loadGuard.current.invalidate()},[load]);
+ useEffect(()=>()=>loadGuard.current.unmount(),[]);
  const weeks=useMemo(()=>{const out=new Map<number,ProgramSession[]>();for(const s of program?.sessions??[]){out.set(s.week_number,[...(out.get(s.week_number)??[]),s])}return [...out.entries()]},[program]);
  async function start(s:ProgramSession){
   try{
@@ -33,7 +38,7 @@ export function ProgramDetailScreen({accessToken,programId,onBack,onWorkout,onAr
   }catch(e){setMessage(e instanceof Error?e.message:'Не удалось открыть тренировку. Проверь подключение и попробуй ещё раз.')}
   finally{setBusy('')}
  }
- async function autoMove(s:ProgramSession){try{setBusy(s.id);const moved=await api.autoRescheduleProgramSession(accessToken,s.id);setMessage(`Перенесено на ${new Date(moved.planned_date).toLocaleDateString()}`);await load()}catch(e){setMessage(e instanceof Error?e.message:'Не удалось перенести')}finally{setBusy('')}}
+ async function autoMove(s:ProgramSession){try{setBusy(s.id);const moved=await api.autoRescheduleProgramSession(accessToken,s.id);setMessage(`Перенесено на ${formatCalendarDate(moved.planned_date)}`);await load()}catch(e){setMessage(e instanceof Error?e.message:'Не удалось перенести')}finally{setBusy('')}}
  async function explain(s:ProgramSession){try{setBusy(s.id);const out=await api.explainProgramSession(accessToken,s.id);setMessage(out.explanation.message)}catch(e){setMessage(e instanceof Error?e.message:'Не удалось получить объяснение')}finally{setBusy('')}}
  async function archiveConfirmed(){try{setBusy('archive');await api.archiveProgram(accessToken,programId);onArchived()}catch(e){setMessage(e instanceof Error?e.message:'Не удалось архивировать программу')}finally{setBusy('')}}
  function archive(){Alert.alert('Архивировать программу?','Она исчезнет из активных программ, но история и выполненные тренировки сохранятся.',[{text:'Отмена',style:'cancel'},{text:'Архивировать',style:'destructive',onPress:()=>{void archiveConfirmed()}}])}
@@ -46,7 +51,7 @@ export function ProgramDetailScreen({accessToken,programId,onBack,onWorkout,onAr
  {message?<View accessibilityRole="alert" style={styles.aiBox}><Text style={styles.aiLabel}>ОБНОВЛЕНИЕ ПРОГРАММЫ</Text><Text style={styles.aiText}>{message}</Text><Pressable accessibilityRole="button" accessibilityLabel="Закрыть сообщение" onPress={()=>setMessage('')} style={styles.touchAction}><Text style={styles.close}>Закрыть</Text></Pressable></View>:null}
  {loadError?<View accessibilityRole="alert" style={styles.inlineError}><Text style={styles.errorText}>{loadError}</Text><Pressable accessibilityRole="button" onPress={()=>void load()} style={styles.touchAction}><Text style={styles.link}>Повторить</Text></Pressable></View>:null}
  {weeks.length===0?<View style={styles.empty}><Text style={styles.emptyTitle}>В программе пока нет тренировок</Text><Text style={styles.muted}>Обнови экран чуть позже или создай новую программу.</Text></View>:null}
- {weeks.map(([week,sessions])=><View key={week} style={styles.week}><View style={styles.weekHead}><Text style={styles.weekTitle}>Неделя {week}</Text>{sessions.some(x=>x.is_deload)?<Text style={styles.deload}>DELOAD</Text>:null}</View>{sessions.map(s=><View key={s.id} style={[styles.session,s.status==='completed'&&styles.done,s.status==='missed'&&styles.missed]}><View style={{flex:1,gap:3}}><Text style={styles.date}>{new Date(s.planned_date).toLocaleDateString()} · {statusLabel[s.status]??s.status}</Text><Text style={styles.muscle}>{muscleTitle(s.muscle)}{s.secondary_muscle?` + ${muscleTitle(s.secondary_muscle)}`:''}</Text><Text style={styles.meta}>{s.planned_sets} плановых подходов · объём ×{s.volume_multiplier.toFixed(2)} · интенсивность ×{s.intensity_multiplier.toFixed(2)}</Text>{s.adaptation_reason?<Text style={styles.reason}>{s.adaptation_reason}</Text>:null}</View><View style={styles.actions}>{s.workout_id||(program.program.status==='active'&&s.status!=='completed'&&s.status!=='skipped')?<Pressable accessibilityRole="button" accessibilityLabel={`${s.workout_id?'Открыть':'Создать'} тренировку: ${muscleTitle(s.muscle)}`} accessibilityState={{disabled:busy!==''}} testID={`${s.workout_id?'program-open':'program-start'}-${s.id}`} disabled={busy!==''} onPress={()=>void start(s)} style={[styles.action,busy!==''&&styles.disabled]}><Text style={styles.actionText}>{busy===s.id?'…':s.workout_id?'Открыть':'Старт'}</Text></Pressable>:null}{program.program.status==='active'&&s.status==='missed'?<Pressable accessibilityRole="button" accessibilityLabel="Автоматически перенести тренировку" accessibilityState={{disabled:busy!==''}} testID={`program-auto-move-${s.id}`} disabled={busy!==''} onPress={()=>autoMove(s)} style={styles.touchAction}><Text style={styles.link}>{busy===s.id?'…':'Автоперенос'}</Text></Pressable>:null}{(s.is_deload||s.adaptation_reason)?<Pressable accessibilityRole="button" accessibilityLabel="Объяснить изменение программы" accessibilityState={{disabled:busy!==''}} testID={`program-explain-${s.id}`} disabled={busy!==''} onPress={()=>explain(s)} style={styles.touchAction}><Text style={styles.link}>{busy===s.id?'…':'Почему?'}</Text></Pressable>:null}</View></View>)}</View>)}
+ {weeks.map(([week,sessions])=><View key={week} style={styles.week}><View style={styles.weekHead}><Text style={styles.weekTitle}>Неделя {week}</Text>{sessions.some(x=>x.is_deload)?<Text style={styles.deload}>DELOAD</Text>:null}</View>{sessions.map(s=><View key={s.id} style={[styles.session,s.status==='completed'&&styles.done,s.status==='missed'&&styles.missed]}><View style={{flex:1,gap:3}}><Text style={styles.date}>{formatCalendarDate(s.planned_date)} · {statusLabel[s.status]??s.status}</Text><Text style={styles.muscle}>{muscleTitle(s.muscle)}{s.secondary_muscle?` + ${muscleTitle(s.secondary_muscle)}`:''}</Text><Text style={styles.meta}>{s.planned_sets} плановых подходов · объём ×{s.volume_multiplier.toFixed(2)} · интенсивность ×{s.intensity_multiplier.toFixed(2)}</Text>{s.adaptation_reason?<Text style={styles.reason}>{s.adaptation_reason}</Text>:null}</View><View style={styles.actions}>{s.workout_id||(program.program.status==='active'&&s.status!=='completed'&&s.status!=='skipped')?<Pressable accessibilityRole="button" accessibilityLabel={`${s.workout_id?'Открыть':'Создать'} тренировку: ${muscleTitle(s.muscle)}`} accessibilityState={{disabled:busy!==''}} testID={`${s.workout_id?'program-open':'program-start'}-${s.id}`} disabled={busy!==''} onPress={()=>void start(s)} style={[styles.action,busy!==''&&styles.disabled]}><Text style={styles.actionText}>{busy===s.id?'…':s.workout_id?'Открыть':'Старт'}</Text></Pressable>:null}{program.program.status==='active'&&s.status==='missed'?<Pressable accessibilityRole="button" accessibilityLabel="Автоматически перенести тренировку" accessibilityState={{disabled:busy!==''}} testID={`program-auto-move-${s.id}`} disabled={busy!==''} onPress={()=>autoMove(s)} style={styles.touchAction}><Text style={styles.link}>{busy===s.id?'…':'Автоперенос'}</Text></Pressable>:null}{(s.is_deload||s.adaptation_reason)?<Pressable accessibilityRole="button" accessibilityLabel="Объяснить изменение программы" accessibilityState={{disabled:busy!==''}} testID={`program-explain-${s.id}`} disabled={busy!==''} onPress={()=>explain(s)} style={styles.touchAction}><Text style={styles.link}>{busy===s.id?'…':'Почему?'}</Text></Pressable>:null}</View></View>)}</View>)}
  </ScrollView>
 }
 function Metric({title,text}:{title:string;text:string}){return <View style={styles.metric}><Text style={[styles.metricTitle,title==='Нет данных'&&styles.metricUnavailable]}>{title}</Text><Text style={styles.metricText}>{text}</Text></View>}

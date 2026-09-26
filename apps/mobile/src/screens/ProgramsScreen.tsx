@@ -3,6 +3,7 @@ import {ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Te
 import {api, ProgramAnalytics, TrainingProgram} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
+import {formatCalendarDate} from '../domain/date';
 
 const statusLabels: Record<string, string> = {archived: 'В архиве', completed: 'Завершена', draft: 'Черновик'};
 const environmentLabels: Record<string, string> = {gym: 'Зал', home: 'Дома', band: 'Резинки'};
@@ -16,6 +17,7 @@ export function ProgramsScreen({accessToken, onBack, onCreate, onOpen}: {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [analyticsError, setAnalyticsError] = useState(false);
 
   const load = useCallback(async (refresh = false) => {
     refresh ? setRefreshing(true) : setLoading(true);
@@ -23,8 +25,12 @@ export function ProgramsScreen({accessToken, onBack, onCreate, onOpen}: {
     try {
       const current = await api.activeProgram(accessToken);
       setActive(current);
-      setAnalytics(current ? await api.programAnalytics(accessToken, current.program.id) : undefined);
-      const old = await api.programHistory(accessToken, 10);
+      setAnalytics(undefined); setAnalyticsError(false);
+      const [stats, old] = await Promise.all([
+        current ? api.programAnalytics(accessToken, current.program.id).catch(() => {setAnalyticsError(true); return undefined;}) : Promise.resolve(undefined),
+        api.programHistory(accessToken, 50),
+      ]);
+      setAnalytics(stats);
       setHistory(old.items.filter(item => item.program.status !== 'active'));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить программы.');
@@ -69,8 +75,8 @@ export function ProgramsScreen({accessToken, onBack, onCreate, onOpen}: {
       ) : (
         <Pressable accessibilityRole="button" accessibilityLabel={`Открыть активную программу ${active.program.title}`} testID="programs-active" onPress={() => onOpen(active.program.id)} style={({pressed}) => [styles.hero, pressed && styles.heroPressed]}>
           <View style={styles.heroTop}><View style={styles.flex}><Text style={styles.heroKicker}>АКТИВНАЯ ПРОГРАММА</Text><Text style={styles.heroTitle}>{active.program.title}</Text></View><Text accessibilityElementsHidden style={styles.arrow}>→</Text></View>
-          <View style={styles.stats}><Stat label="Неделя" value={`${analytics?.current_week ?? 1}/${active.program.weeks}`} /><Stat label="Выполнение" value={`${analytics?.adherence_percent ?? 0}%`} /><Stat label="Готово" value={`${analytics?.completed_sessions ?? 0}`} /></View>
-          {analytics?.next_session ? <Text style={styles.next}>Следующая: {new Date(analytics.next_session.planned_date).toLocaleDateString('ru-RU')} · {analytics.next_session.muscle}{analytics.next_session.is_deload ? ' · разгрузка' : ''}</Text> : <Text style={styles.next}>Все ближайшие тренировки выполнены.</Text>}
+          <View style={styles.stats}><Stat label="Неделя" value={analytics?`${analytics.current_week}/${active.program.weeks}`:'—'} /><Stat label="Выполнение" value={analytics?`${analytics.adherence_percent}%`:'—'} /><Stat label="Готово" value={analytics?`${analytics.completed_sessions}`:'—'} /></View>
+          {analyticsError ? <Text accessibilityRole="alert" style={styles.next}>Аналитика недоступна. Открой программу для повторной загрузки.</Text> : analytics?.next_session ? <Text style={styles.next}>Следующая: {formatCalendarDate(analytics.next_session.planned_date)} · {analytics.next_session.muscle}{analytics.next_session.is_deload ? ' · разгрузка' : ''}</Text> : <Text style={styles.next}>Все ближайшие тренировки выполнены.</Text>}
         </Pressable>
       )}
       {!loading && !error && history.length > 0 ? <View style={styles.history}>
