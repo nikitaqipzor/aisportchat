@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -9,7 +10,9 @@ import (
 
 func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	userID := currentUserID(r.Context())
-	err := s.store.DeleteAccount(r.Context(), userID, s.bodyScanService.DeleteUserMedia)
+	err := s.store.DeleteAccount(r.Context(), userID, func(ctx context.Context) error {
+		return s.bodyScanService.DeleteUserMedia(ctx, userID)
+	})
 	if errors.Is(err, store.ErrMediaPending) {
 		writeJSON(w, http.StatusAccepted, map[string]string{"status": "media_cleanup_pending"})
 		return
