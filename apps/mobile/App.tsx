@@ -39,6 +39,8 @@ import {TechniqueWorkoutContext} from './src/domain/technique';
 import {BottomNavigation, MainTab} from './src/components/BottomNavigation';
 import {refreshTodayIfPossible} from './src/health/sync';
 import {healthConnect} from './src/native/healthConnect';
+import {restTimerCoordinator} from './src/domain/restTimer';
+import {clearPrivateTempFiles} from './src/native/privateCache';
 
 type Step = 'auth' | 'goal' | 'profile' | 'training' | 'profileSettings' | 'home' | 'muscle' | 'manualWorkout' | 'preview' | 'active' | 'summary' | 'history' | 'workoutDetail' | 'nutrition' | 'nutritionSetup' | 'foodSearch' | 'customFood' | 'recipes' | 'progress' | 'aiFood' | 'foodPhoto' | 'aiCoach' | 'weeklyAI' | 'programs' | 'programSetup' | 'programDetail' | 'bodyScan' | 'technique' | 'recovery' | 'devices';
 type Environment = 'home' | 'gym' | 'band';
@@ -414,6 +416,40 @@ export default function App() {
     await performLogout();
   }
 
+  async function deleteAccount() {
+    if (!tokens) throw new Error('Сначала войдите в аккаунт.');
+    const owner = await sessionStorage.currentUserId();
+    // An unsuccessful server request leaves the account and local data intact.
+    const deleteStatus = await api.deleteAccount(tokens.access_token);
+    // Invalidate token refresh before clearing storage; the deleted account cannot be restored.
+    api.setCurrentTokens(null);
+    let tokenCleanupFailed = false;
+    try { await sessionStorage.clearTokens(); } catch { tokenCleanupFailed = true; }
+    const cleanup = await Promise.allSettled([
+      sessionStorage.clearDeletedAccountData(owner),
+      owner ? healthConnect.clearPassiveSync(owner) : Promise.resolve(),
+      restTimerCoordinator.invalidate(),
+      clearPrivateTempFiles().then(cleared => { if (!cleared) throw new Error('Не удалось очистить временные файлы'); }),
+    ]);
+    setTokens(null);
+    setWorkout(null);
+    setSummary(null);
+    setSelectedMuscle(null);
+    setSelectedWorkoutId(null);
+    setSelectedProgramId(null);
+    setTechniqueContext(null);
+    setTechniquePrefill(null);
+    setFoodSearchQuery('');
+    setAIFoodText('');
+    setStep('auth');
+    setSystemMessage('');
+    const mediaNote = deleteStatus === 202 ? ' Удаление снимков на сервере поставлено в очередь; сервер будет повторять очистку.' : '';
+    const localNote = tokenCleanupFailed || cleanup.some(result => result.status === 'rejected')
+      ? ' Некоторые данные на телефоне не удалось очистить. Очистите данные приложения в настройках Android.'
+      : ' Локальные данные приложения очищены.';
+    Alert.alert('Аккаунт удалён', `Аккаунт удалён из активной системы.${mediaNote}${localNote}`);
+  }
+
   const mainTab: MainTab | null =
     step === 'home' ? 'home' :
     step === 'programs' ? 'training' :
@@ -452,7 +488,7 @@ export default function App() {
       }} />}
       {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onManualWorkout={() => {setSelectedMuscle(null); setStep('manualWorkout');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => {setDevicesOrigin('home');setStep('devices')}} onProfile={() => setStep('profileSettings')} />}
       {step === 'manualWorkout' && <ManualWorkoutScreen accessToken={access} onBack={() => setStep('home')} onCreated={next => {setWorkout(next);setSelectedMuscle(null);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('manualWorkout');setPreviewCanStart(true);setStep('preview')}} />}
-      {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} />}
+      {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} onDeleteAccount={deleteAccount} />}
       {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next);setPreviewOrigin('muscle');setPreviewCanStart(true);setStep('preview');}} />}
       {step === 'preview' && workout && <WorkoutPreviewScreen accessToken={access} workout={workout} canStart={previewCanStart} onBack={() => setStep(previewOrigin === 'manualWorkout' ? 'home' : previewOrigin)} onStart={next => {void updateWorkout(next); setStep('active');}} />}
       {step === 'active' && workout && <ActiveWorkoutScreen accessToken={access} workout={workout} onWorkoutChange={next => {void updateWorkout(next);}} onFinish={finishWorkout} onCancel={cancelWorkout} techniquePrefill={techniquePrefill} onTechnique={context => {setTechniqueContext(context); setStep('technique');}} />}

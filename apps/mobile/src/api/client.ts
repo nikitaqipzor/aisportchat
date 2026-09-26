@@ -637,7 +637,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-async function rawRequest<T>(path: string, options: RequestInit = {}, accessToken?: string): Promise<T> {
+async function rawRequest<T>(path: string, options: RequestInit = {}, accessToken?: string, returnStatus = false): Promise<T> {
   const controller = new AbortController();
   const upstream = options.signal;
   const abort = () => controller.abort(upstream?.reason);
@@ -654,6 +654,7 @@ async function rawRequest<T>(path: string, options: RequestInit = {}, accessToke
         ...(options.headers ?? {}),
       },
     });
+    if (returnStatus && response.ok) return response.status as T;
     return await parseResponse<T>(response);
   } catch (error) {
     if (error instanceof ApiError) throw error;
@@ -805,6 +806,19 @@ export const api = {
   },
   logout(refreshToken: string) {
     return request<void>('/auth/logout', {method: 'POST', body: JSON.stringify({refresh_token: refreshToken})});
+  },
+  async deleteAccount(accessToken: string): Promise<204 | 202> {
+    const current = await getCurrentTokens();
+    let status: number;
+    try {
+      status = await rawRequest<number>('/auth/account', {method: 'DELETE'}, current?.access_token ?? accessToken, true);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 401) throw error;
+      const fresh = await rotateAccessToken(current?.refresh_token);
+      status = await rawRequest<number>('/auth/account', {method: 'DELETE'}, fresh.access_token, true);
+    }
+    if (status !== 204 && status !== 202) throw new Error('Неожиданный ответ сервера при удалении аккаунта.');
+    return status;
   },
   onboardingStatus(accessToken: string) {
     return request<OnboardingStatus>('/onboarding/status', {method: 'GET'}, accessToken);

@@ -86,6 +86,7 @@ func NewServerWithAIAndMedia(st store.Store, tm *auth.TokenManager, aiProvider a
 	mux.HandleFunc("POST /api/v1/auth/login", s.login)
 	mux.HandleFunc("POST /api/v1/auth/refresh", s.refresh)
 	mux.HandleFunc("POST /api/v1/auth/logout", s.logout)
+	mux.Handle("DELETE /api/v1/auth/account", s.requireAuth(http.HandlerFunc(s.deleteAccount)))
 
 	mux.HandleFunc("GET /api/v1/muscles", s.listMuscles)
 	mux.Handle("GET /api/v1/muscles/{muscle_id}/stats", s.requireAuth(http.HandlerFunc(s.muscleStats)))
@@ -1236,6 +1237,14 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		claims, err := s.tokens.ParseAccessToken(strings.TrimSpace(strings.TrimPrefix(header, "Bearer ")))
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "invalid or expired access token")
+			return
+		}
+		if _, err := s.store.FindUserByID(r.Context(), claims.Sub); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				writeError(w, http.StatusUnauthorized, "invalid or expired access token")
+			} else {
+				writeError(w, http.StatusInternalServerError, "account lookup failed")
+			}
 			return
 		}
 		ctx := context.WithValue(r.Context(), userIDKey, claims.Sub)

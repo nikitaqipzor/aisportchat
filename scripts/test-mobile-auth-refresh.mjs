@@ -49,6 +49,7 @@ let stored = expired;
 let changed = null;
 let refreshCalls = 0;
 let protectedCalls = 0;
+let deleteCalls = 0;
 
 global.fetch = async (url, init = {}) => {
   const value = String(url);
@@ -64,6 +65,10 @@ global.fetch = async (url, init = {}) => {
   }
   if (value.endsWith('/profile')) {
     return new Response(JSON.stringify({profile: {}}), {status: 200, headers: {'Content-Type': 'application/json'}});
+  }
+  if (value.endsWith('/auth/account')) {
+    deleteCalls += 1;
+    return new Response(JSON.stringify({status: 'media_cleanup_pending'}), {status: 202, headers: {'Content-Type': 'application/json'}});
   }
   return new Response(JSON.stringify({profile_completed: true, goal_completed: true, training_completed: true, completed: true}), {status: 200, headers: {'Content-Type': 'application/json'}});
 };
@@ -87,4 +92,7 @@ assert.equal(refreshCalls, 1, 'concurrent 401s must share one refresh request');
 assert.equal(stored.access_token, 'fresh-access');
 assert.equal(changed.access_token, 'fresh-access');
 assert.ok(protectedCalls >= 4, 'both requests should be retried after refresh');
+api.setCurrentTokens(expired);
+assert.equal(await api.deleteAccount(expired.access_token), 202, 'committed deletion with pending media must sign out');
+assert.equal(deleteCalls, 1, '401 followed by one refresh should make only one authenticated delete');
 console.log(`mobile auth refresh: PASS (refreshCalls=${refreshCalls}, protectedCalls=${protectedCalls})`);

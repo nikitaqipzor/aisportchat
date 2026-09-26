@@ -37,6 +37,7 @@ type Memory struct {
 	healthSnapshots   map[string]HealthDailySnapshot
 	programs          map[string]Program
 	programSessions   map[string][]ProgramSession
+	pendingMedia      map[string]bool
 }
 
 func NewMemory() *Memory {
@@ -65,6 +66,7 @@ func NewMemory() *Memory {
 		healthSnapshots:   map[string]HealthDailySnapshot{},
 		programs:          map[string]Program{},
 		programSessions:   map[string][]ProgramSession{},
+		pendingMedia:      map[string]bool{},
 	}
 }
 

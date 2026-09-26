@@ -75,6 +75,30 @@ paths:
       responses:
         '204':
           description: Logged out
+  /auth/account:
+    delete:
+      operationId: deleteAccount
+      summary: Permanently delete the authenticated account
+      description: Removes the account, refresh sessions, all linked fitness and health data, and locally stored body scan photos. Existing access tokens are rejected after deletion. A server error leaves the deletion unconfirmed and the client should retry; backups follow the deployment retention policy.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Account and user-owned data deleted
+        '202':
+          description: Account and database records deleted; private media cleanup queued for automatic retry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: media_cleanup_pending
+        '401':
+          description: Missing, invalid, expired or deleted account bearer token
+        '500':
+          description: Deletion could not be completed; retry later
   /profile:
     get:
       operationId: getProfile

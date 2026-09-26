@@ -54,6 +54,7 @@ services:
       DATABASE_URL: postgres://fitness:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/fitness?sslmode=disable
       REDIS_ADDR: redis:6379
       AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?set AUTH_TOKEN_SECRET}
+      AUTH_TRUSTED_PROXY_CIDRS: 172.30.239.10/32
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6-terra}
       MEDIA_ROOT: /data/media
@@ -64,6 +65,9 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    networks:
+      - default
+      - edge
 
   caddy:
     image: caddy:2-alpine
@@ -80,6 +84,15 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+    networks:
+      edge:
+        ipv4_address: 172.30.239.10
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.239.0/24
 
 volumes:
   postgres_data:

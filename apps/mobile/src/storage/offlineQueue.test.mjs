@@ -108,4 +108,16 @@ const w3 = (await sessionStorage.loadQueue()).filter(item => item.workoutId === 
 assert.deepEqual(Array.from(w3, item => item.type), ['log_set', 'log_set', 'cancel_workout']);
 await sessionStorage.removeWorkoutOperations('w3');
 assert.equal((await sessionStorage.loadQueue()).filter(item => item.workoutId === 'w3').length, 0);
+db.set('fitness.ai-chat.v3.owner-A', 'private chat');
+db.set('fitness.training-environments.v3.owner-A', 'private settings');
+db.set('fitness.food-write.v1.owner-A.meal', 'private draft');
+db.set('fitness.rest-timer.v1', 'private timer');
+db.set('fitness.ai-chat.v3.owner-B', 'other user');
+await sessionStorage.clearTokens();
+await sessionStorage.clearDeletedAccountData('owner-A');
+assert.ok(![...db.keys()].some(key => key.includes('owner-A') || key === 'fitness.rest-timer.v1'));
+assert.equal(db.get('fitness.ai-chat.v3.owner-B'), 'other user');
+db.set('fitness.ai-chat.v3.owner-B', 'legacy owner unknown');
+await sessionStorage.clearDeletedAccountData();
+assert.equal(db.size, 0, 'legacy sessions without an owner purge all app-owned caches');
 console.log('mobile offline queue concurrency: PASS');

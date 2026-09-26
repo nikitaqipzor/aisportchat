@@ -74,6 +74,19 @@ export const sessionStorage = {
     await Promise.all(pendingKeys.map(item => AsyncStorage.removeItem(item)));
     await Promise.all(LEGACY_KEYS.map(item => AsyncStorage.removeItem(item)));
   },
+  async clearDeletedAccountData(owner?: string) {
+    await queueMutation;
+    const encodedOwner = owner ? encodeURIComponent(owner) : undefined;
+    const allKeys = await AsyncStorage.getAllKeys();
+    const ownedKeys = allKeys.filter(item =>
+      item.startsWith('fitness.') && (
+        !encodedOwner || item.endsWith(`.v3.${encodedOwner}`) ||
+        item.startsWith(`fitness.food-write.v1.${encodedOwner}.`)
+      )
+    );
+    // Older unscoped caches and the rest timer can contain data from this account.
+    await Promise.all([...new Set([...ownedKeys, ...LEGACY_KEYS, 'fitness.rest-timer.v1'])].map(item => AsyncStorage.removeItem(item)));
+  },
   async saveTrainingEnvironments(environments: TrainingEnvironment[], initiatingOwnerUserId?: string) { const owner=initiatingOwnerUserId??await currentOwnerUserId(); const valid=[...new Set(environments.filter(value=>value==='home'||value==='gym'||value==='band'))]; if(!owner||!valid.length||await currentOwnerUserId()!==owner)return false; await AsyncStorage.setItem(key('training-environments',owner),JSON.stringify({environments:valid,cachedAt:new Date().toISOString()} satisfies TrainingEnvironmentCache)); return await currentOwnerUserId()===owner; },
   async loadTrainingEnvironments(): Promise<TrainingEnvironmentCache|null> { return loadOwned<TrainingEnvironmentCache>('training-environments'); },
   async clearTrainingEnvironments(owner?: string) { const target=owner??await currentOwnerUserId(); if(target)await AsyncStorage.removeItem(key('training-environments',target)); },

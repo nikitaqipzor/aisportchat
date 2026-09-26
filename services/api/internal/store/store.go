@@ -12,6 +12,7 @@ var (
 	ErrInvalidState = errors.New("invalid state")
 	ErrForbidden    = errors.New("forbidden")
 	ErrIdempotencyConflict = errors.New("idempotency key was already used for another request")
+	ErrMediaPending = errors.New("account deleted; media cleanup pending")
 )
 
 type User struct {
@@ -334,6 +335,10 @@ type Store interface {
 	CreateUser(ctx context.Context, email, passwordHash string) (User, error)
 	FindUserByEmail(ctx context.Context, email string) (User, error)
 	FindUserByID(ctx context.Context, id string) (User, error)
+	// DeleteAccount atomically deletes the user and persists a media cleanup job.
+	// ErrMediaPending means the user is gone and an automatic retry is scheduled.
+	DeleteAccount(ctx context.Context, userID string, cleanup func(context.Context) error) error
+	RetryPendingMedia(ctx context.Context, cleanup func(context.Context, string) error) error
 
 	UpsertProfile(ctx context.Context, profile Profile) (Profile, error)
 	GetProfile(ctx context.Context, userID string) (Profile, error)
