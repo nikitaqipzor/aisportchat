@@ -522,7 +522,11 @@ func (p *Postgres) CreateWorkout(ctx context.Context, w Workout, exercises []Wor
 }
 
 func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error) {
-	rows, err := p.query(ctx, `SELECT id::text,user_id::text,muscle,environment,status,duration_minutes::text,started_at::text,completed_at::text,duration_seconds::text,COALESCE(total_volume,0)::text,COALESCE(completion_percent,0)::text,COALESCE(ended_early,false)::text,COALESCE(is_favorite,false)::text,created_at::text FROM workouts WHERE id=$1::uuid AND user_id=$2::uuid`, sp(workoutID), sp(userID))
+	return p.getWorkoutWithQuery(ctx, userID, workoutID, p.query)
+}
+
+func (p *Postgres) getWorkoutWithQuery(ctx context.Context, userID, workoutID string, query func(context.Context, string, ...*string) ([][]*string, error)) (WorkoutDetails, error) {
+	rows, err := query(ctx, `SELECT id::text,user_id::text,muscle,environment,status,duration_minutes::text,started_at::text,completed_at::text,duration_seconds::text,COALESCE(total_volume,0)::text,COALESCE(completion_percent,0)::text,COALESCE(ended_early,false)::text,COALESCE(is_favorite,false)::text,created_at::text FROM workouts WHERE id=$1::uuid AND user_id=$2::uuid`, sp(workoutID), sp(userID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -533,7 +537,7 @@ func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (Wo
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
-	exRows, err := p.query(ctx, `SELECT id::text,workout_id::text,exercise_id,position::text,target_sets::text,target_reps_min::text,target_reps_max::text,target_weight::text,rest_seconds::text,COALESCE(progression_note,'') FROM workout_exercises WHERE workout_id=$1::uuid ORDER BY position`, sp(workoutID))
+	exRows, err := query(ctx, `SELECT id::text,workout_id::text,exercise_id,position::text,target_sets::text,target_reps_min::text,target_reps_max::text,target_weight::text,rest_seconds::text,COALESCE(progression_note,'') FROM workout_exercises WHERE workout_id=$1::uuid ORDER BY position`, sp(workoutID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -545,7 +549,7 @@ func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (Wo
 		}
 		exs = append(exs, ex)
 	}
-	setRows, err := p.query(ctx, `SELECT s.id::text,s.workout_exercise_id::text,s.set_number::text,s.weight::text,s.repetitions::text,s.rpe::text,s.rir::text,s.completed_at::text FROM workout_sets s JOIN workout_exercises e ON e.id=s.workout_exercise_id WHERE e.workout_id=$1::uuid ORDER BY e.position,s.set_number`, sp(workoutID))
+	setRows, err := query(ctx, `SELECT s.id::text,s.workout_exercise_id::text,s.set_number::text,s.weight::text,s.repetitions::text,s.rpe::text,s.rir::text,s.completed_at::text FROM workout_sets s JOIN workout_exercises e ON e.id=s.workout_exercise_id WHERE e.workout_id=$1::uuid ORDER BY e.position,s.set_number`, sp(workoutID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}

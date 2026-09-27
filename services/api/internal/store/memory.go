@@ -23,6 +23,8 @@ type Memory struct {
 	workouts          map[string]Workout
 	workoutEx         map[string][]WorkoutExercise
 	workoutSets       map[string][]WorkoutSet
+	workoutOperationMu sync.Mutex
+	workoutOperations map[string]workoutOperationReceipt
 	records           []PersonalRecord
 	nutrition         map[string]NutritionProfile
 	foodItems         map[string]FoodItem
@@ -32,6 +34,7 @@ type Memory struct {
 	measurements      map[string][]BodyMeasurement
 	bodyScans         map[string]BodyScan
 	bodyScanPhotos    map[string]map[string]BodyScanPhoto
+	bodyScanMedia     map[string]bodyScanMediaJob
 	techniqueAnalyses map[string]TechniqueAnalysis
 	recoveryCheckIns  map[string]RecoveryCheckIn
 	healthSnapshots   map[string]HealthDailySnapshot
@@ -52,6 +55,7 @@ func NewMemory() *Memory {
 		workouts:          map[string]Workout{},
 		workoutEx:         map[string][]WorkoutExercise{},
 		workoutSets:       map[string][]WorkoutSet{},
+		workoutOperations: map[string]workoutOperationReceipt{},
 		records:           []PersonalRecord{},
 		nutrition:         map[string]NutritionProfile{},
 		foodItems:         seedFoodItems(),
@@ -61,6 +65,7 @@ func NewMemory() *Memory {
 		measurements:      map[string][]BodyMeasurement{},
 		bodyScans:         map[string]BodyScan{},
 		bodyScanPhotos:    map[string]map[string]BodyScanPhoto{},
+		bodyScanMedia:     map[string]bodyScanMediaJob{},
 		techniqueAnalyses: map[string]TechniqueAnalysis{},
 		recoveryCheckIns:  map[string]RecoveryCheckIn{},
 		healthSnapshots:   map[string]HealthDailySnapshot{},
@@ -1210,19 +1215,24 @@ func (m *Memory) GetActiveProgram(_ context.Context, userID string) (ProgramWith
 	return ProgramWithSessions{Program: *best, Sessions: cloneProgramSessions(m.programSessions[best.ID])}, nil
 }
 
-func (m *Memory) ListPrograms(_ context.Context, userID string, limit int) ([]ProgramWithSessions, error) {
+func (m *Memory) ListPrograms(_ context.Context, userID string, limit int, before *ProgramHistoryCursor) ([]ProgramWithSessions, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if limit <= 0 || limit > 50 {
+	if limit <= 0 || limit > 51 {
 		limit = 20
 	}
 	items := make([]Program, 0)
 	for _, p := range m.programs {
-		if p.UserID == userID {
+		if p.UserID == userID && (before == nil || p.UpdatedAt.Before(before.UpdatedAt) || (p.UpdatedAt.Equal(before.UpdatedAt) && p.ID < before.ID)) {
 			items = append(items, p)
 		}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].UpdatedAt.After(items[j].UpdatedAt) })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
 	if len(items) > limit {
 		items = items[:limit]
 	}
@@ -1406,6 +1416,10 @@ func (m *Memory) UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto) (
 		m.mu.Unlock()
 		return BodyScanDetails{}, ErrInvalidState
 	}
+	if job, ok := m.bodyScanMedia[photo.StorageKey]; !ok || job.userID != photo.UserID {
+		m.mu.Unlock()
+		return BodyScanDetails{}, ErrInvalidState
+	}
 	if photo.ID == "" {
 		photo.ID = newID()
 	}
@@ -1415,7 +1429,11 @@ func (m *Memory) UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto) (
 	if _, ok := m.bodyScanPhotos[photo.ScanID]; !ok {
 		m.bodyScanPhotos[photo.ScanID] = map[string]BodyScanPhoto{}
 	}
+	if previous, ok := m.bodyScanPhotos[photo.ScanID][photo.View]; ok && previous.StorageKey != photo.StorageKey {
+		m.bodyScanMedia[previous.StorageKey] = bodyScanMediaJob{userID: photo.UserID, readyAt: time.Now()}
+	}
 	m.bodyScanPhotos[photo.ScanID][photo.View] = photo
+	delete(m.bodyScanMedia, photo.StorageKey)
 	m.mu.Unlock()
 	return m.GetBodyScan(ctx, photo.UserID, photo.ScanID)
 }
@@ -1450,6 +1468,9 @@ func (m *Memory) DeleteBodyScan(_ context.Context, userID, scanID string) error 
 	scan, ok := m.bodyScans[scanID]
 	if !ok || scan.UserID != userID {
 		return ErrNotFound
+	}
+	for _, photo := range m.bodyScanPhotos[scanID] {
+		m.bodyScanMedia[photo.StorageKey] = bodyScanMediaJob{userID: userID, readyAt: time.Now()}
 	}
 	delete(m.bodyScans, scanID)
 	delete(m.bodyScanPhotos, scanID)

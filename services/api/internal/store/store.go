@@ -271,6 +271,13 @@ type BodyScanDetails struct {
 	Photos []BodyScanPhoto `json:"photos"`
 }
 
+// BodyScanMediaCleanup records uploads before writing bytes and retries orphan
+// deletion after database commits or process restarts.
+type BodyScanMediaCleanup interface {
+	StageBodyScanPhoto(ctx context.Context, userID, scanID, key string) error
+	RetryBodyScanMedia(ctx context.Context, userID string, remove func(context.Context, string) error) error
+}
+
 type TechniqueAnalysis struct {
 	ID                string    `json:"id"`
 	UserID            string    `json:"-"`
@@ -360,6 +367,8 @@ type Store interface {
 	GetWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	StartWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	UpsertWorkoutSet(ctx context.Context, userID, workoutID string, set WorkoutSet) (WorkoutDetails, error)
+	// ApplyWorkoutOperation stores the mutation and its user-scoped receipt atomically.
+	ApplyWorkoutOperation(ctx context.Context, userID, workoutID, operationID, kind, payloadHash string, set WorkoutSet) (WorkoutDetails, error)
 	ReplaceWorkoutExercise(ctx context.Context, userID, workoutID, workoutExerciseID string, replacement WorkoutExercise) (WorkoutDetails, error)
 	CompleteWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	CancelWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
@@ -404,6 +413,7 @@ type Store interface {
 	UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto) (BodyScanDetails, error)
 	CompleteBodyScan(ctx context.Context, userID, scanID string, completedAt time.Time) (BodyScanDetails, error)
 	DeleteBodyScan(ctx context.Context, userID, scanID string) error
+	BodyScanMediaCleanup
 	SaveTechniqueAnalysis(ctx context.Context, analysis TechniqueAnalysis) (TechniqueAnalysis, error)
 	UpdateTechniqueAnalysisResult(ctx context.Context, userID, analysisID, resultJSON string) error
 	GetTechniqueAnalysis(ctx context.Context, userID, analysisID string) (TechniqueAnalysis, error)
@@ -412,7 +422,7 @@ type Store interface {
 	CreateProgram(ctx context.Context, program Program, sessions []ProgramSession) (ProgramWithSessions, error)
 	GetProgram(ctx context.Context, userID, programID string) (ProgramWithSessions, error)
 	GetActiveProgram(ctx context.Context, userID string) (ProgramWithSessions, error)
-	ListPrograms(ctx context.Context, userID string, limit int) ([]ProgramWithSessions, error)
+	ListPrograms(ctx context.Context, userID string, limit int, before *ProgramHistoryCursor) ([]ProgramWithSessions, error)
 	GetProgramSession(ctx context.Context, userID, sessionID string) (ProgramSession, error)
 	UpdateProgramSession(ctx context.Context, userID string, session ProgramSession) (ProgramSession, error)
 	FindProgramSessionByWorkout(ctx context.Context, userID, workoutID string) (ProgramSession, error)

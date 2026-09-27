@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,7 +135,7 @@ func TestBodyScanFlowAndPrivacy(t *testing.T) {
 	}
 }
 
-func TestDeleteKeepsMetadataWhenPrivateBlobDeletionFails(t *testing.T) {
+func TestDeleteQueuesPrivateBlobDeletionFailureForRetry(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemory()
 	blobs := media.NewMemoryStore()
@@ -154,12 +155,12 @@ func TestDeleteKeepsMetadataWhenPrivateBlobDeletionFails(t *testing.T) {
 	if err := NewService(st, failing).Delete(ctx, user, scan.Scan.ID); err == nil {
 		t.Fatal("expected private blob deletion failure")
 	}
-	if _, err := svc.Get(ctx, user, scan.Scan.ID); err != nil {
-		t.Fatalf("metadata must remain available for retry: %v", err)
+	if _, err := svc.Get(ctx, user, scan.Scan.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted scan metadata still available: %v", err)
 	}
 	failing.failKey = ""
-	if err := NewService(st, failing).Delete(ctx, user, scan.Scan.ID); err != nil {
-		t.Fatalf("idempotent retry: %v", err)
+	if err := NewService(st, failing).retryMedia(ctx, user); err != nil {
+		t.Fatalf("queued retry: %v", err)
 	}
 	if _, err := svc.Get(ctx, user, scan.Scan.ID); err != store.ErrNotFound {
 		t.Fatalf("metadata still accessible after retry: %v", err)
@@ -311,7 +312,7 @@ func TestAddPhotoReportsOldBlobDeletionFailureWithoutDeletingCurrentPhoto(t *tes
 	oldKey := scan.Photos[0].StorageKey
 	failing := &deleteFailingMedia{Store: blobs, failKey: oldKey}
 	_, err = NewService(st, failing).AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL)
-	if err == nil || !strings.Contains(err.Error(), "delete replaced photo") {
+	if err == nil || !strings.Contains(err.Error(), "delete body scan media") {
 		t.Fatalf("expected explicit cleanup failure, got %v", err)
 	}
 	current, err := svc.Get(ctx, user, scan.Scan.ID)
@@ -321,6 +322,56 @@ func TestAddPhotoReportsOldBlobDeletionFailureWithoutDeletingCurrentPhoto(t *tes
 	if _, err := svc.Photo(ctx, user, scan.Scan.ID, "front"); err != nil {
 		t.Fatalf("new photo must remain available: %v", err)
 	}
+	failing.failKey = ""
+	if err := NewService(st, failing).retryMedia(ctx, user); err != nil { t.Fatalf("queued retry: %v", err) }
+	if _, err := blobs.Get(ctx, oldKey); !errors.Is(err, media.ErrNotFound) { t.Fatalf("old photo survived retry: %v", err) }
+}
+
+type gatedMedia struct {
+	media.Store
+	mu sync.Mutex
+	puts int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (m *gatedMedia) Put(ctx context.Context, key, mime string, data []byte) error {
+	m.mu.Lock()
+	m.puts++
+	index := m.puts
+	m.mu.Unlock()
+	if index == 1 { close(m.started); <-m.release }
+	return m.Store.Put(ctx, key, mime, data)
+}
+
+func TestConcurrentReshootsCleanupEverySupersededBlob(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "reshoot-race@example.com")
+	base := NewService(st, blobs)
+	scan, err := base.Create(ctx, user)
+	if err != nil { t.Fatal(err) }
+	data := testImage(t, false)
+	scan, err = base.AddPhoto(ctx, user, scan.Scan.ID, "front", data)
+	if err != nil { t.Fatal(err) }
+	oldKey := scan.Photos[0].StorageKey
+	gated := &gatedMedia{Store: blobs, started: make(chan struct{}), release: make(chan struct{})}
+	svc := NewService(st, gated)
+	first := make(chan error, 1)
+	go func() { _, err := svc.AddPhoto(ctx, user, scan.Scan.ID, "front", data); first <- err }()
+	<-gated.started
+	second, err := svc.AddPhoto(ctx, user, scan.Scan.ID, "front", data)
+	if err != nil { t.Fatal(err) }
+	intermediateKey := second.Photos[0].StorageKey
+	close(gated.release)
+	if err := <-first; err != nil { t.Fatal(err) }
+	current, err := svc.Get(ctx, user, scan.Scan.ID)
+	if err != nil { t.Fatal(err) }
+	for _, key := range []string{oldKey, intermediateKey} {
+		if _, err := blobs.Get(ctx, key); !errors.Is(err, media.ErrNotFound) { t.Fatalf("superseded media %q remains: %v", key, err) }
+	}
+	if _, err := blobs.Get(ctx, current.Photos[0].StorageKey); err != nil { t.Fatalf("active media removed: %v", err) }
 }
 
 func TestBodyScanRejectsDarkImage(t *testing.T) {

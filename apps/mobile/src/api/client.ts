@@ -863,17 +863,17 @@ export const api = {
   startWorkout(accessToken: string, workoutId: string) {
     return request<WorkoutView>(`/workouts/${workoutId}/start`, {method: 'POST', body: '{}'}, accessToken);
   },
-  logSet(accessToken: string, workoutId: string, payload: {workout_exercise_id: string; set_number: number; weight?: number; repetitions: number; rpe?: number; rir?: number}) {
-    return request<WorkoutView>(`/workouts/${workoutId}/sets`, {method: 'PUT', body: JSON.stringify(payload)}, accessToken);
+  logSet(accessToken: string, workoutId: string, payload: {workout_exercise_id: string; set_number: number; weight?: number; repetitions: number; rpe?: number; rir?: number}, operationId?: string) {
+    return request<WorkoutView>(`/workouts/${workoutId}/sets`, {method: 'PUT', headers: operationId ? {'Idempotency-Key': operationId} : undefined, body: JSON.stringify(payload)}, accessToken);
   },
   replaceExercise(accessToken: string, workoutId: string, workoutExerciseId: string, reason = 'user_request') {
     return request<WorkoutView>(`/workouts/${workoutId}/exercises/${workoutExerciseId}/replace`, {method: 'POST', body: JSON.stringify({reason})}, accessToken);
   },
-  finishWorkout(accessToken: string, workoutId: string) {
-    return request<FinishResult>(`/workouts/${workoutId}/finish`, {method: 'POST', body: '{}'}, accessToken);
+  finishWorkout(accessToken: string, workoutId: string, operationId?: string) {
+    return request<FinishResult>(`/workouts/${workoutId}/finish`, {method: 'POST', headers: operationId ? {'Idempotency-Key': operationId} : undefined, body: '{}'}, accessToken);
   },
-  cancelWorkout(accessToken: string, workoutId: string) {
-    return request<WorkoutView>(`/workouts/${workoutId}/cancel`, {method: 'POST', body: '{}'}, accessToken);
+  cancelWorkout(accessToken: string, workoutId: string, operationId?: string) {
+    return request<WorkoutView>(`/workouts/${workoutId}/cancel`, {method: 'POST', headers: operationId ? {'Idempotency-Key': operationId} : undefined, body: '{}'}, accessToken);
   },
   workoutHistory(accessToken: string, filters: HistoryFilters = {}) {
     const query = new URLSearchParams();
@@ -906,8 +906,8 @@ export const api = {
   activeProgram(accessToken: string) {
     return request<TrainingProgram | undefined>('/programs/active', {method: 'GET'}, accessToken);
   },
-  programHistory(accessToken: string, limit = 20) {
-    return request<{items: TrainingProgram[]}>(`/programs/history?limit=${limit}`, {method: 'GET'}, accessToken);
+  programHistory(accessToken: string, limit = 20, cursor = '') {
+    return request<{items: TrainingProgram[]; has_more: boolean; next_cursor: string}>(`/programs/history?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, {method: 'GET'}, accessToken);
   },
   getProgram(accessToken: string, programId: string) {
     return request<TrainingProgram>(`/programs/${programId}`, {method: 'GET'}, accessToken);

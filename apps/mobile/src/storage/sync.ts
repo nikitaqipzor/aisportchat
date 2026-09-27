@@ -30,12 +30,12 @@ async function flushOnce(tokens: AuthTokens): Promise<SyncResult> {
     if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
     try {
       if (operation.type === 'log_set') {
-        latestWorkout = await api.logSet(currentTokens.access_token, operation.workoutId, operation.payload);
+        latestWorkout = await api.logSet(currentTokens.access_token, operation.workoutId, operation.payload, operation.id);
       } else if (operation.type === 'finish_workout') {
-        finish = await api.finishWorkout(currentTokens.access_token, operation.workoutId);
+        finish = await api.finishWorkout(currentTokens.access_token, operation.workoutId, operation.id);
         latestWorkout = finish.workout;
       } else {
-        latestWorkout = await api.cancelWorkout(currentTokens.access_token, operation.workoutId);
+        latestWorkout = await api.cancelWorkout(currentTokens.access_token, operation.workoutId, operation.id);
       }
       if (!(await ownerIsCurrent())) return {tokens: currentTokens, remaining: queue.length};
       // Delete only the acknowledged ID. A newer enqueue of this same set has a

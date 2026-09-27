@@ -81,6 +81,8 @@ jobs:
           node scripts/test-mobile-body-scan.mjs
           node scripts/test-mobile-health-passive-sync.mjs
           node scripts/test-mobile-core-screens.mjs
+          node apps/mobile/src/screens/ProgramsScreen.test.mjs
+          node scripts/test-mobile-workout-offline-operations.mjs
           node scripts/test-mobile-analytics-races.mjs
           node scripts/test-mobile-home-reliability.mjs
           node scripts/test-mobile-nutrition-regressions.mjs

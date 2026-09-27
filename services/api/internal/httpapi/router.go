@@ -601,11 +601,17 @@ func (s *Server) startWorkout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) logWorkoutSet(w http.ResponseWriter, r *http.Request) {
+	operationID, ok := workoutOperationID(w, r)
+	if !ok { return }
 	var in workouts.SetInput
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	out, err := s.workoutService.LogSet(r.Context(), currentUserID(r.Context()), r.PathValue("workout_id"), in)
+	var out workouts.WorkoutView
+	var err error
+	if operationID == "" { out, err = s.workoutService.LogSet(r.Context(), currentUserID(r.Context()), r.PathValue("workout_id"), in) } else {
+		out, err = s.workoutService.LogSetOperation(r.Context(), currentUserID(r.Context()), r.PathValue("workout_id"), operationID, in)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -627,9 +633,15 @@ func (s *Server) replaceWorkoutExercise(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) finishWorkout(w http.ResponseWriter, r *http.Request) {
+	operationID, ok := workoutOperationID(w, r)
+	if !ok { return }
 	userID := currentUserID(r.Context())
 	workoutID := r.PathValue("workout_id")
-	out, err := s.workoutService.Finish(r.Context(), userID, workoutID)
+	var out workouts.FinishResult
+	var err error
+	if operationID == "" { out, err = s.workoutService.Finish(r.Context(), userID, workoutID) } else {
+		out, err = s.workoutService.FinishOperation(r.Context(), userID, workoutID, operationID)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -640,9 +652,15 @@ func (s *Server) finishWorkout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) cancelWorkout(w http.ResponseWriter, r *http.Request) {
+	operationID, ok := workoutOperationID(w, r)
+	if !ok { return }
 	userID := currentUserID(r.Context())
 	workoutID := r.PathValue("workout_id")
-	out, err := s.workoutService.Cancel(r.Context(), userID, workoutID)
+	var out workouts.WorkoutView
+	var err error
+	if operationID == "" { out, err = s.workoutService.Cancel(r.Context(), userID, workoutID) } else {
+		out, err = s.workoutService.CancelOperation(r.Context(), userID, workoutID, operationID)
+	}
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -737,16 +755,17 @@ func (s *Server) activeProgram(w http.ResponseWriter, r *http.Request) {
 func (s *Server) programHistory(w http.ResponseWriter, r *http.Request) {
 	limit := 20
 	if raw := r.URL.Query().Get("limit"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			limit = n
-		}
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 50 { writeError(w, http.StatusBadRequest, "limit must be between 1 and 50"); return }
+		limit = n
 	}
-	out, err := s.programService.History(r.Context(), currentUserID(r.Context()), limit)
+	out, hasMore, nextCursor, err := s.programService.HistoryPage(r.Context(), currentUserID(r.Context()), limit, r.URL.Query().Get("cursor"))
+	if errors.Is(err, programs.ErrInvalidHistoryCursor) { writeError(w, http.StatusBadRequest, "invalid program history cursor"); return }
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "has_more": hasMore, "next_cursor": nextCursor})
 }
 
 func (s *Server) getProgram(w http.ResponseWriter, r *http.Request) {

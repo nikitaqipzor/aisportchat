@@ -12,6 +12,7 @@ import (
 
 	"github.com/example/ai-fitness-os/services/api/internal/aifitness"
 	"github.com/example/ai-fitness-os/services/api/internal/auth"
+	"github.com/example/ai-fitness-os/services/api/internal/bodyscan"
 	"github.com/example/ai-fitness-os/services/api/internal/httpapi"
 	"github.com/example/ai-fitness-os/services/api/internal/media"
 	"github.com/example/ai-fitness-os/services/api/internal/store"
@@ -40,6 +41,7 @@ func main() {
 	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
 	defer cleanupCancel()
 	httpapi.StartMediaCleanupWorker(cleanupCtx, st, mediaStore)
+	bodyscan.StartMediaCleanupWorker(cleanupCtx, st, mediaStore)
 	handler, err := httpapi.TrustedProxyClientIPHandler(
 		httpapi.NewServerWithAIAndMedia(st, tm, aiProvider, mediaStore),
 		os.Getenv("AUTH_TRUSTED_PROXY_CIDRS"),

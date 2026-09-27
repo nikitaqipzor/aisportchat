@@ -543,6 +543,7 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/WorkoutId'
+      - $ref: '#/components/parameters/WorkoutOperationId'
       requestBody:
         required: true
         content:
@@ -557,7 +558,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkoutView'
         '409':
-          description: Workout is not active
+          description: Workout is not active or operation ID belongs to a different request
         '422':
           description: Invalid set values
   /workouts/{workout_id}/exercises/{workout_exercise_id}/replace:
@@ -599,6 +600,7 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/WorkoutId'
+      - $ref: '#/components/parameters/WorkoutOperationId'
       responses:
         '200':
           description: Workout completed with volume and next-session recommendations
@@ -607,7 +609,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/FinishResult'
         '409':
-          description: Workout is not active
+          description: Workout is not active or operation ID belongs to a different request
   /workouts/{workout_id}/cancel:
     post:
       operationId: cancelWorkout
@@ -615,6 +617,7 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/WorkoutId'
+      - $ref: '#/components/parameters/WorkoutOperationId'
       responses:
         '200':
           description: Planned or active workout cancelled; linked program session
@@ -624,7 +627,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkoutView'
         '409':
-          description: Workout cannot be cancelled in its current state
+          description: Workout cannot be cancelled or operation ID belongs to a different request
   /programs/generate:
     post:
       operationId: generateProgram
@@ -663,6 +666,7 @@ paths:
   /programs/history:
     get:
       operationId: listPrograms
+      description: Returns programs in descending updated_at and id order. Pass next_cursor to load the next page.
       security:
       - bearerAuth: []
       parameters:
@@ -673,9 +677,31 @@ paths:
           minimum: 1
           maximum: 50
           default: 20
+      - in: query
+        name: cursor
+        description: Opaque next_cursor from the previous page.
+        schema:
+          type: string
       responses:
         '200':
           description: Program history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrainingProgram'
+                  has_more:
+                    type: boolean
+                  next_cursor:
+                    type: string
+                    description: Empty when there are no more programs.
+        '400':
+          description: Invalid limit or cursor.
   /programs/{program_id}:
     get:
       operationId: getProgram
@@ -1560,6 +1586,16 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
+    WorkoutOperationId:
+      in: header
+      name: Idempotency-Key
+      required: false
+      description: Stable offline operation ID. Replays return the original workout mutation result. The receipt is kept until account deletion; the same user cannot reuse an ID for a different workout, action, or payload. Omit for legacy behavior.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[A-Za-z0-9_.:-]+$'
     WorkoutId:
       in: path
       name: workout_id

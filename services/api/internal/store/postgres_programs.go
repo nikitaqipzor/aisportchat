@@ -78,11 +78,17 @@ func (p *Postgres) GetActiveProgram(ctx context.Context, userID string) (Program
 	}
 	return p.GetProgram(ctx, userID, val(rows[0], 0))
 }
-func (p *Postgres) ListPrograms(ctx context.Context, userID string, limit int) ([]ProgramWithSessions, error) {
-	if limit <= 0 || limit > 50 {
+func (p *Postgres) ListPrograms(ctx context.Context, userID string, limit int, before *ProgramHistoryCursor) ([]ProgramWithSessions, error) {
+	if limit <= 0 || limit > 51 {
 		limit = 20
 	}
-	rows, err := p.query(ctx, `SELECT id::text FROM programs WHERE user_id=$1::uuid ORDER BY updated_at DESC LIMIT $2::int`, sp(userID), sp(strconv.Itoa(limit)))
+	var rows [][]*string
+	var err error
+	if before == nil {
+		rows, err = p.query(ctx, `SELECT id::text FROM programs WHERE user_id=$1::uuid ORDER BY updated_at DESC, id DESC LIMIT $2::int`, sp(userID), sp(strconv.Itoa(limit)))
+	} else {
+		rows, err = p.query(ctx, `SELECT id::text FROM programs WHERE user_id=$1::uuid AND (updated_at,id) < ($2::timestamptz,$3::uuid) ORDER BY updated_at DESC, id DESC LIMIT $4::int`, sp(userID), sp(before.UpdatedAt.Format(time.RFC3339Nano)), sp(before.ID), sp(strconv.Itoa(limit)))
+	}
 	if err != nil {
 		return nil, err
 	}

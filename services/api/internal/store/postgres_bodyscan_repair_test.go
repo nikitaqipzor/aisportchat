@@ -43,6 +43,7 @@ func TestPostgresBodyScanUpsertChecksOwnerAndDraft(t *testing.T) {
 	for _, view := range []string{"front", "side", "back"} {
 		photo.View = view
 		photo.StorageKey = view + "-original"
+		if err := pg.StageBodyScanPhoto(ctx, owner.ID, scan.Scan.ID, photo.StorageKey); err != nil { t.Fatal(err) }
 		if _, err := pg.UpsertBodyScanPhoto(ctx, photo); err != nil {
 			t.Fatal(err)
 		}
@@ -61,4 +62,32 @@ func TestPostgresBodyScanUpsertChecksOwnerAndDraft(t *testing.T) {
 	if current.Scan.Status != "completed" || len(current.Photos) != 3 || current.Photos[0].StorageKey != "front-original" {
 		t.Fatalf("unexpected stored scan after rejected writes: %+v", current)
 	}
+}
+
+func TestPostgresBodyScanCleanupSurvivesReplacementAndDeletion(t *testing.T) {
+	dsn := os.Getenv("POSTGRES_TEST_DSN")
+	if dsn == "" { t.Skip("POSTGRES_TEST_DSN is not set") }
+	pg, err := NewPostgres(dsn)
+	if err != nil { t.Fatal(err) }
+	defer pg.Close()
+	ctx := context.Background()
+	owner, err := pg.CreateUser(ctx, fmt.Sprintf("scan-cleanup-%d@example.com", time.Now().UnixNano()), "hash")
+	if err != nil { t.Fatal(err) }
+	scan, err := pg.CreateBodyScan(ctx, BodyScan{UserID: owner.ID})
+	if err != nil { t.Fatal(err) }
+	defer pg.DeleteBodyScan(ctx, owner.ID, scan.Scan.ID)
+	photo := BodyScanPhoto{ScanID: scan.Scan.ID, UserID: owner.ID, View: "front", MimeType: "image/jpeg", QualityStatus: "accepted"}
+	for _, key := range []string{"first", "second"} {
+		photo.StorageKey = fmt.Sprintf("body-scans/%s/%s/%s", owner.ID, scan.Scan.ID, key)
+		if err := pg.StageBodyScanPhoto(ctx, owner.ID, scan.Scan.ID, photo.StorageKey); err != nil { t.Fatal(err) }
+		if _, err := pg.UpsertBodyScanPhoto(ctx, photo); err != nil { t.Fatal(err) }
+	}
+	removed := []string{}
+	fail := errors.New("disk unavailable")
+	if err := pg.RetryBodyScanMedia(ctx, owner.ID, func(_ context.Context, key string) error { return fail }); !errors.Is(err, fail) { t.Fatalf("expected retryable failure: %v", err) }
+	if err := pg.RetryBodyScanMedia(ctx, owner.ID, func(_ context.Context, key string) error { removed = append(removed, key); return nil }); err != nil { t.Fatal(err) }
+	if len(removed) != 1 || removed[0] != fmt.Sprintf("body-scans/%s/%s/first", owner.ID, scan.Scan.ID) { t.Fatalf("replacement cleanup: %v", removed) }
+	if err := pg.DeleteBodyScan(ctx, owner.ID, scan.Scan.ID); err != nil { t.Fatal(err) }
+	if err := pg.RetryBodyScanMedia(ctx, owner.ID, func(_ context.Context, key string) error { removed = append(removed, key); return nil }); err != nil { t.Fatal(err) }
+	if len(removed) != 2 || removed[1] != fmt.Sprintf("body-scans/%s/%s/second", owner.ID, scan.Scan.ID) { t.Fatalf("deletion cleanup: %v", removed) }
 }

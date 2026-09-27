@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, ProgramAnalytics, TrainingProgram} from '../api/client';
 import {AppButton} from '../components/AppButton';
@@ -14,32 +14,66 @@ export function ProgramsScreen({accessToken, onBack, onCreate, onOpen}: {
   const [active, setActive] = useState<TrainingProgram>();
   const [analytics, setAnalytics] = useState<ProgramAnalytics>();
   const [history, setHistory] = useState<TrainingProgram[]>([]);
+  const [nextCursor, setNextCursor] = useState('');
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState('');
+  const loadGeneration = useRef(0);
+  const loadingMoreRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [analyticsError, setAnalyticsError] = useState(false);
 
   const load = useCallback(async (refresh = false) => {
+    const generation = ++loadGeneration.current;
     refresh ? setRefreshing(true) : setLoading(true);
+    setMoreError('');
     setError('');
     try {
       const current = await api.activeProgram(accessToken);
       setActive(current);
       setAnalytics(undefined); setAnalyticsError(false);
       const [stats, old] = await Promise.all([
-        current ? api.programAnalytics(accessToken, current.program.id).catch(() => {setAnalyticsError(true); return undefined;}) : Promise.resolve(undefined),
+        current ? api.programAnalytics(accessToken, current.program.id).catch(() => {if (generation === loadGeneration.current) setAnalyticsError(true); return undefined;}) : Promise.resolve(undefined),
         api.programHistory(accessToken, 50),
       ]);
+      if (generation !== loadGeneration.current) return;
       setAnalytics(stats);
       setHistory(old.items.filter(item => item.program.status !== 'active'));
+      setNextCursor(old.next_cursor);
+      setHasMore(old.has_more);
     } catch (e) {
+      if (generation !== loadGeneration.current) return;
       setError(e instanceof Error ? e.message : 'Не удалось загрузить программы.');
     } finally {
-      setLoading(false); setRefreshing(false);
+      if (generation === loadGeneration.current) { setLoading(false); setRefreshing(false); }
     }
   }, [accessToken]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMoreRef.current || loading || refreshing) return;
+    loadingMoreRef.current = true;
+    const generation = loadGeneration.current;
+    setLoadingMore(true); setMoreError('');
+    try {
+      const page = await api.programHistory(accessToken, 50, nextCursor);
+      if (generation !== loadGeneration.current) return;
+      setHistory(previous => {
+        const ids = new Set(previous.map(item => item.program.id));
+        return [...previous, ...page.items.filter(item => item.program.status !== 'active' && !ids.has(item.program.id))];
+      });
+      setNextCursor(page.next_cursor);
+      setHasMore(page.has_more);
+    } catch (e) {
+      if (generation === loadGeneration.current) setMoreError(e instanceof Error ? e.message : 'Не удалось загрузить прошлые программы.');
+    } finally {
+      loadingMoreRef.current = false;
+      if (generation === loadGeneration.current) setLoadingMore(false);
+    }
+  }, [accessToken, hasMore, nextCursor, loading, refreshing]);
+
+  useEffect(() => { void load(); return () => { loadGeneration.current++; }; }, [load]);
 
   return (
     <ScrollView testID="programs-screen" contentContainerStyle={styles.container}
@@ -79,11 +113,13 @@ export function ProgramsScreen({accessToken, onBack, onCreate, onOpen}: {
           {analyticsError ? <Text accessibilityRole="alert" style={styles.next}>Аналитика недоступна. Открой программу для повторной загрузки.</Text> : analytics?.next_session ? <Text style={styles.next}>Следующая: {formatCalendarDate(analytics.next_session.planned_date)} · {analytics.next_session.muscle}{analytics.next_session.is_deload ? ' · разгрузка' : ''}</Text> : <Text style={styles.next}>Все ближайшие тренировки выполнены.</Text>}
         </Pressable>
       )}
-      {!loading && !error && history.length > 0 ? <View style={styles.history}>
+      {!loading && !error && (history.length > 0 || hasMore) ? <View style={styles.history}>
         <Text style={styles.section}>Прошлые программы</Text>
         {history.map(item => <Pressable key={item.program.id} accessibilityRole="button" accessibilityLabel={`Открыть программу ${item.program.title}`} onPress={() => onOpen(item.program.id)} style={({pressed}) => [styles.card, pressed && styles.pressed]}>
           <View style={styles.flex}><Text style={styles.cardTitle}>{item.program.title}</Text><Text style={styles.muted}>{statusLabels[item.program.status] ?? item.program.status} · {environmentLabels[item.program.environment] ?? item.program.environment}</Text></View><Text accessibilityElementsHidden style={styles.cardArrow}>→</Text>
         </Pressable>)}
+        {moreError ? <Text accessibilityRole="alert" style={styles.muted}>{moreError}</Text> : null}
+        {hasMore ? <AppButton label={moreError ? 'Повторить загрузку' : 'Показать ещё'} variant="secondary" loading={loadingMore} disabled={loadingMore} testID="programs-load-more" onPress={() => void loadMore()} /> : null}
       </View> : null}
     </ScrollView>
   );

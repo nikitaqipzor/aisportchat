@@ -2,6 +2,9 @@ package workouts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -37,6 +40,12 @@ type SetInput struct {
 	Repetitions       int      `json:"repetitions"`
 	RPE               *float64 `json:"rpe,omitempty"`
 	RIR               *float64 `json:"rir,omitempty"`
+}
+
+func operationHash(kind, workoutID string, payload any) string {
+	canonical, _ := json.Marshal(struct { Kind string `json:"kind"`; WorkoutID string `json:"workout_id"`; Payload any `json:"payload"` }{kind, workoutID, payload})
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
 }
 
 type ReplaceInput struct {
@@ -291,7 +300,21 @@ func (s *Service) Cancel(ctx context.Context, userID, workoutID string) (Workout
 	return s.view(ctx, userID, details)
 }
 
+func (s *Service) CancelOperation(ctx context.Context, userID, workoutID, operationID string) (WorkoutView, error) {
+	details, err := s.store.ApplyWorkoutOperation(ctx, userID, workoutID, operationID, "cancel_workout", operationHash("cancel_workout", workoutID, nil), store.WorkoutSet{})
+	if err != nil { return WorkoutView{}, err }
+	return s.view(ctx, userID, details)
+}
+
 func (s *Service) LogSet(ctx context.Context, userID, workoutID string, in SetInput) (WorkoutView, error) {
+	return s.logSet(ctx, userID, workoutID, "", in)
+}
+
+func (s *Service) LogSetOperation(ctx context.Context, userID, workoutID, operationID string, in SetInput) (WorkoutView, error) {
+	return s.logSet(ctx, userID, workoutID, operationID, in)
+}
+
+func (s *Service) logSet(ctx context.Context, userID, workoutID, operationID string, in SetInput) (WorkoutView, error) {
 	if in.WorkoutExerciseID == "" || in.SetNumber < 1 || in.Repetitions < 1 || in.Repetitions > 200 {
 		return WorkoutView{}, errors.New("invalid set data")
 	}
@@ -304,10 +327,15 @@ func (s *Service) LogSet(ctx context.Context, userID, workoutID string, in SetIn
 	if in.RIR != nil && (*in.RIR < 0 || *in.RIR > 10) {
 		return WorkoutView{}, errors.New("rir must be between 0 and 10")
 	}
-	details, err := s.store.UpsertWorkoutSet(ctx, userID, workoutID, store.WorkoutSet{
+	set := store.WorkoutSet{
 		WorkoutExerciseID: in.WorkoutExerciseID, SetNumber: in.SetNumber,
 		Weight: cloneFloat(in.Weight), Repetitions: in.Repetitions, RPE: cloneFloat(in.RPE), RIR: cloneFloat(in.RIR),
-	})
+	}
+	var details store.WorkoutDetails
+	var err error
+	if operationID == "" { details, err = s.store.UpsertWorkoutSet(ctx, userID, workoutID, set) } else {
+		details, err = s.store.ApplyWorkoutOperation(ctx, userID, workoutID, operationID, "log_set", operationHash("log_set", workoutID, in), set)
+	}
 	if err != nil {
 		return WorkoutView{}, err
 	}
@@ -377,6 +405,16 @@ func (s *Service) Finish(ctx context.Context, userID, workoutID string) (FinishR
 	if err != nil {
 		return FinishResult{}, err
 	}
+	return s.finishFromDetails(ctx, userID, workoutID, details)
+}
+
+func (s *Service) FinishOperation(ctx context.Context, userID, workoutID, operationID string) (FinishResult, error) {
+	details, err := s.store.ApplyWorkoutOperation(ctx, userID, workoutID, operationID, "finish_workout", operationHash("finish_workout", workoutID, nil), store.WorkoutSet{})
+	if err != nil { return FinishResult{}, err }
+	return s.finishFromDetails(ctx, userID, workoutID, details)
+}
+
+func (s *Service) finishFromDetails(ctx context.Context, userID, workoutID string, details store.WorkoutDetails) (FinishResult, error) {
 	view, err := s.view(ctx, userID, details)
 	if err != nil {
 		return FinishResult{}, err

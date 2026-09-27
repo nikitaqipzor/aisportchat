@@ -42,8 +42,15 @@ export function WorkoutDetailScreen({
       setArchivedProgram(false);
       if (details.workout.status === 'planned') {
         try {
-          const programs = await api.programHistory(accessToken, 50);
-          setArchivedProgram(programs.items.some(item => item.program.status !== 'active' && item.sessions.some(session => session.workout_id === workoutId)));
+          let cursor = '';
+          do {
+            const programs = await api.programHistory(accessToken, 50, cursor);
+            if (programs.items.some(item => item.program.status !== 'active' && item.sessions.some(session => session.workout_id === workoutId))) {
+              setArchivedProgram(true);
+              break;
+            }
+            cursor = programs.next_cursor;
+          } while (cursor);
         } catch {
           // The server still enforces this rule when a workout is started.
         }
