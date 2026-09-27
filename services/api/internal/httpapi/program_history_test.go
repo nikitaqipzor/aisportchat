@@ -29,10 +29,10 @@ func testProgramHistoryPagesBeyondFifty(t *testing.T, st store.Store) {
 	access, _, err := tm.NewAccessToken(owner.ID)
 	if err != nil { t.Fatal(err) }
 	for i := 0; i < 121; i++ {
-		_, err = st.CreateProgram(ctx, store.Program{UserID: owner.ID, Title: fmt.Sprintf("Program %d", i), Status: "archived"}, nil)
+		_, err = st.CreateProgram(ctx, store.Program{UserID: owner.ID, Title: fmt.Sprintf("Program %d", i), GoalType: "strength", Weeks: 4, WorkoutsPerWeek: 3, Environment: "gym", Status: "archived", StartDate: time.Now().UTC()}, nil)
 		if err != nil { t.Fatal(err) }
 	}
-	_, err = st.CreateProgram(ctx, store.Program{UserID: other.ID, Title: "private", Status: "archived"}, nil)
+	_, err = st.CreateProgram(ctx, store.Program{UserID: other.ID, Title: "private", GoalType: "strength", Weeks: 4, WorkoutsPerWeek: 3, Environment: "gym", Status: "archived", StartDate: time.Now().UTC()}, nil)
 	if err != nil { t.Fatal(err) }
 	seen := map[string]bool{}
 	cursor := ""
@@ -56,7 +56,7 @@ func testProgramHistoryPagesBeyondFifty(t *testing.T, st store.Store) {
 		}
 		cursor = body.NextCursor
 		if page == 0 {
-			if _, err := st.CreateProgram(ctx, store.Program{UserID: owner.ID, Title: "inserted after first page", Status: "archived"}, nil); err != nil { t.Fatal(err) }
+			if _, err := st.CreateProgram(ctx, store.Program{UserID: owner.ID, Title: "inserted after first page", GoalType: "strength", Weeks: 4, WorkoutsPerWeek: 3, Environment: "gym", Status: "archived", StartDate: time.Now().UTC()}, nil); err != nil { t.Fatal(err) }
 		}
 	}
 	if len(seen) != 121 || cursor != "" { t.Fatalf("seen=%d final cursor=%q", len(seen), cursor) }
