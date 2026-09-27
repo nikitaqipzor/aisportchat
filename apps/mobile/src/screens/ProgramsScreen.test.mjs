@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import ts from 'typescript';
+import {loadTypeScript} from '../../../../scripts/load-typescript.mjs';
+
+const mod = await loadTypeScript();
+const ts = mod.default ?? mod;
 
 const hooks = [];
 let position = 0;
