@@ -13,6 +13,7 @@ jobs:
         run: |
           ./scripts/verify-staging-deploy.sh
           ./scripts/verify-railway-deploy.sh
+          bash ./scripts/test-preflight-connected-api.sh
       - name: Build Railway API image
         run: docker build -f services/api/Dockerfile -t athletica-api:railway .
 

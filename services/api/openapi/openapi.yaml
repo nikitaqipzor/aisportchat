@@ -5,6 +5,33 @@ info:
 servers:
 - url: http://localhost:8080/api/v1
 paths:
+  /healthz:
+    servers:
+    - url: http://localhost:8080
+    get:
+      operationId: healthz
+      summary: API health and release identity
+      description: Returns the health status, response time, and an optional non-secret release marker configured with PILOT_RELEASE_ID.
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - time
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  time:
+                    type: string
+                    format: date-time
+                  release_id:
+                    type: string
+                    description: Trimmed PILOT_RELEASE_ID when configured; omitted when unset or blank. Must not contain secrets.
   /auth/register:
     post:
       operationId: register

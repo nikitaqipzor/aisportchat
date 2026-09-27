@@ -22,6 +22,7 @@ for path in [Path('infra/docker-compose.yml'), Path('services/api/openapi/openap
 PY
 
 echo "== API contract + migration structure =="
+bash "$ROOT/scripts/test-preflight-connected-api.sh"
 python3 "$ROOT/scripts/verify-api-contract.py"
 python3 "$ROOT/scripts/verify-migrations.py"
 

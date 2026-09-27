@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -174,7 +175,11 @@ func NewServerWithAIAndMedia(st store.Store, tm *auth.TokenManager, aiProvider a
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "time": time.Now().UTC()})
+	response := map[string]any{"status": "ok", "time": time.Now().UTC()}
+	if releaseID := strings.TrimSpace(os.Getenv("PILOT_RELEASE_ID")); releaseID != "" {
+		response["release_id"] = releaseID
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
