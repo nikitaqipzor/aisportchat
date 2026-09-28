@@ -4,6 +4,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -84,15 +86,44 @@ func (p *Postgres) UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto)
 		photo.CreatedAt = time.Now().UTC()
 	}
 	issues := strings.Join(photo.QualityIssues, "|")
-	rows, err := p.query(ctx, `INSERT INTO body_scan_photos(id,scan_id,view,storage_key,mime_type,width,height,bytes,brightness,contrast,quality_status,quality_issues,created_at)
+	// Lock the parent scan until the photo row is committed. CompleteBodyScan's
+	// UPDATE acquires the same row lock, so a completed scan cannot race past
+	// this draft/owner check and accept a replacement afterwards.
+	err := p.withTx(ctx, func() error {
+		owner, err := p.queryLocked(ctx, `SELECT status FROM body_scans WHERE id=$1::uuid AND user_id=$2::uuid FOR UPDATE`, sp(photo.ScanID), sp(photo.UserID))
+		if err != nil {
+			return err
+		}
+		if len(owner) == 0 {
+			return ErrNotFound
+		}
+		if val(owner[0], 0) != "draft" {
+			return ErrInvalidState
+		}
+		// Serialize activation against the worker's delete of this staged key.
+		// If the worker already removed an expired upload, reject this write.
+		staged, err := p.queryLocked(ctx, `SELECT storage_key FROM body_scan_media_cleanup WHERE storage_key=$1 AND user_id=$2::uuid FOR UPDATE`, sp(photo.StorageKey), sp(photo.UserID))
+		if err != nil { return err }; if len(staged) == 0 { return ErrInvalidState }
+		previous, err := p.queryLocked(ctx, `SELECT storage_key FROM body_scan_photos WHERE scan_id=$1::uuid AND view=$2`, sp(photo.ScanID), sp(photo.View))
+		if err != nil { return err }
+		rows, err := p.queryLocked(ctx, `INSERT INTO body_scan_photos(id,scan_id,view,storage_key,mime_type,width,height,bytes,brightness,contrast,quality_status,quality_issues,created_at)
 VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::int,$7::int,$8::int,$9::numeric,$10::numeric,$11,$12,$13::timestamptz)
 ON CONFLICT(scan_id,view) DO UPDATE SET id=EXCLUDED.id,storage_key=EXCLUDED.storage_key,mime_type=EXCLUDED.mime_type,width=EXCLUDED.width,height=EXCLUDED.height,bytes=EXCLUDED.bytes,brightness=EXCLUDED.brightness,contrast=EXCLUDED.contrast,quality_status=EXCLUDED.quality_status,quality_issues=EXCLUDED.quality_issues,created_at=EXCLUDED.created_at
 RETURNING id::text`, sp(photo.ID), sp(photo.ScanID), sp(photo.View), sp(photo.StorageKey), sp(photo.MimeType), sp(strconv.Itoa(photo.Width)), sp(strconv.Itoa(photo.Height)), sp(strconv.Itoa(photo.Bytes)), sp(strconv.FormatFloat(photo.Brightness, 'f', 2, 64)), sp(strconv.FormatFloat(photo.Contrast, 'f', 2, 64)), sp(photo.QualityStatus), sp(issues), sp(photo.CreatedAt.Format(time.RFC3339Nano)))
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return ErrNotFound
+		}
+		if _, err = p.queryLocked(ctx, `DELETE FROM body_scan_media_cleanup WHERE storage_key=$1`, sp(photo.StorageKey)); err != nil { return err }
+		if len(previous) > 0 && val(previous[0], 0) != photo.StorageKey {
+			if _, err = p.queryLocked(ctx, `INSERT INTO body_scan_media_cleanup(storage_key,user_id,ready_at) VALUES($1,$2::uuid,now()) ON CONFLICT(storage_key) DO UPDATE SET ready_at=now()`, sp(val(previous[0], 0)), sp(photo.UserID)); err != nil { return err }
+		}
+		return nil
+	})
 	if err != nil {
 		return BodyScanDetails{}, err
-	}
-	if len(rows) == 0 {
-		return BodyScanDetails{}, ErrNotFound
 	}
 	return p.GetBodyScan(ctx, photo.UserID, photo.ScanID)
 }
@@ -140,12 +171,44 @@ func scanBodyScanPhoto(r []*string) (BodyScanPhoto, error) {
 }
 
 func (p *Postgres) DeleteBodyScan(ctx context.Context, userID, scanID string) error {
-	rows, err := p.query(ctx, `DELETE FROM body_scans WHERE id=$1::uuid AND user_id=$2::uuid RETURNING id::text`, sp(scanID), sp(userID))
-	if err != nil {
+	return p.withTx(ctx, func() error {
+		rows, err := p.queryLocked(ctx, `SELECT id::text FROM body_scans WHERE id=$1::uuid AND user_id=$2::uuid FOR UPDATE`, sp(scanID), sp(userID))
+		if err != nil { return err }; if len(rows) == 0 { return ErrNotFound }
+		if _, err = p.queryLocked(ctx, `INSERT INTO body_scan_media_cleanup(storage_key,user_id,ready_at) SELECT storage_key,$2::uuid,now() FROM body_scan_photos WHERE scan_id=$1::uuid ON CONFLICT(storage_key) DO UPDATE SET ready_at=now()`, sp(scanID), sp(userID)); err != nil { return err }
+		_, err = p.queryLocked(ctx, `DELETE FROM body_scans WHERE id=$1::uuid AND user_id=$2::uuid`, sp(scanID), sp(userID))
 		return err
+	})
+}
+
+func (p *Postgres) StageBodyScanPhoto(ctx context.Context, userID, scanID, key string) error {
+	rows, err := p.query(ctx, `INSERT INTO body_scan_media_cleanup(storage_key,user_id,ready_at) SELECT $3,user_id,now()+interval '1 hour' FROM body_scans WHERE id=$1::uuid AND user_id=$2::uuid AND status='draft' RETURNING storage_key`, sp(scanID), sp(userID), sp(key))
+	if err != nil { return err }; if len(rows) == 0 { return ErrInvalidState }; return nil
+}
+
+// The outbox row is locked while the external deletion runs. New captures use
+// unique keys and cannot make an old key active again. The reference check also
+// protects a staged upload whose database write committed before cleanup.
+func (p *Postgres) RetryBodyScanMedia(ctx context.Context, userID string, remove func(context.Context, string) error) error {
+	filter := ""
+	args := []*string{}
+	if userID != "" { filter = " AND user_id=$1::uuid"; args = append(args, sp(userID)) }
+	rows, err := p.query(ctx, `SELECT storage_key FROM body_scan_media_cleanup j WHERE (ready_at<=now() OR NOT EXISTS (SELECT 1 FROM users WHERE id=j.user_id))`+filter+` ORDER BY ready_at LIMIT 100`, args...)
+	if err != nil { return err }
+	var all error
+	for _, row := range rows {
+		key := val(row, 0)
+		err := p.withTx(ctx, func() error {
+			pending, err := p.queryLocked(ctx, `SELECT storage_key FROM body_scan_media_cleanup j WHERE storage_key=$1 AND (ready_at<=now() OR NOT EXISTS (SELECT 1 FROM users WHERE id=j.user_id)) FOR UPDATE`, sp(key))
+			if err != nil || len(pending) == 0 { return err }
+			refs, err := p.queryLocked(ctx, `SELECT id::text FROM body_scan_photos WHERE storage_key=$1 LIMIT 1`, sp(key))
+			if err != nil { return err }
+			if len(refs) == 0 {
+				if err = remove(ctx, key); err != nil { return fmt.Errorf("delete body scan media %s: %w", key, err) }
+			}
+			_, err = p.queryLocked(ctx, `DELETE FROM body_scan_media_cleanup WHERE storage_key=$1`, sp(key))
+			return err
+		})
+		all = errors.Join(all, err)
 	}
-	if len(rows) == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return all
 }

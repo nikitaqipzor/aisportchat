@@ -1,4 +1,4 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View} from 'react-native';
 import {api, WorkoutSet, WorkoutView} from '../api/client';
 import {ExerciseGuide} from '../components/ExerciseGuide';
@@ -37,6 +37,12 @@ export function ActiveWorkoutScreen({
   const [guideOpen, setGuideOpen] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  // A ref closes the gap before React applies disabled props after a tap.
+  const action = useRef<'saving' | 'confirmingFinish' | 'confirmingCancel' | 'finishing' | 'cancelling' | null>(null);
+
+  function releaseAction(expected: NonNullable<typeof action.current>) {
+    if (action.current === expected) action.current = null;
+  }
 
   const current = workout.exercises[exerciseIndex];
   const completedSets = current?.sets.length ?? 0;
@@ -100,9 +106,19 @@ export function ActiveWorkoutScreen({
     return {done, target};
   }, [workout]);
 
-  if (!current) return <View style={styles.emptyState}><Text accessibilityRole="header" style={styles.emptyTitle}>В тренировке нет упражнений</Text><Text style={styles.emptyText}>Вернись назад и создай тренировку ещё раз.</Text><AppButton label="Отменить тренировку" variant="secondary" onPress={() => { void onCancel(); }} /></View>;
+  if (!current) return <View style={styles.emptyState}><Text accessibilityRole="header" style={styles.emptyTitle}>В тренировке нет упражнений</Text><Text style={styles.emptyText}>Вернись назад и создай тренировку ещё раз.</Text><AppButton label="Отменить тренировку" variant="secondary" onPress={requestCancel} /></View>;
 
   async function saveSet() {
+    if (action.current) return;
+    action.current = 'saving';
+    try {
+      await saveSetLocked();
+    } finally {
+      releaseAction('saving');
+    }
+  }
+
+  async function saveSetLocked() {
     if (nextSetNumber > current.workout_exercise.target_sets) {
       setError('Все запланированные подходы упражнения уже выполнены. Перейди к следующему.');
       return;
@@ -158,10 +174,22 @@ export function ActiveWorkoutScreen({
             : item,
         ),
       };
-      await sessionStorage.enqueueSet(workout.workout.id, payload);
-      await sessionStorage.saveActiveWorkout(updated);
+      try {
+        await sessionStorage.enqueueSet(workout.workout.id, payload);
+      } catch (storageError) {
+        setError(storageError instanceof Error ? storageError.message : 'Не удалось сохранить подход на телефоне. Попробуйте ещё раз.');
+        return;
+      }
+      let cacheSaved = true;
+      try {
+        await sessionStorage.saveActiveWorkout(updated);
+      } catch {
+        // The set is durable in the queue; keep the visible workout in step with it.
+        cacheSaved = false;
+        setError('Подход сохранён в очереди, но не удалось обновить локальную тренировку.');
+      }
       onWorkoutChange(updated);
-      setOfflineNotice('Нет сети: подход сохранён на телефоне и будет синхронизирован автоматически.');
+      if (cacheSaved) setOfflineNotice('Нет сети: подход сохранён на телефоне и будет синхронизирован автоматически.');
       startRest(current.workout_exercise.rest_seconds);
     } finally {
       setSaving(false);
@@ -181,6 +209,8 @@ export function ActiveWorkoutScreen({
   }
 
   async function finishConfirmed() {
+    if (action.current !== 'confirmingFinish') return;
+    action.current = 'finishing';
     try {
       setFinishing(true);
       setError('');
@@ -191,10 +221,13 @@ export function ActiveWorkoutScreen({
       setError(e instanceof Error ? e.message : 'Не удалось завершить тренировку.');
     } finally {
       setFinishing(false);
+      releaseAction('finishing');
     }
   }
 
   function requestFinish() {
+    if (action.current) return;
+    action.current = 'confirmingFinish';
     const early = progress.done < progress.target;
     Alert.alert(
       early ? 'Завершить раньше?' : 'Завершить тренировку?',
@@ -202,29 +235,48 @@ export function ActiveWorkoutScreen({
         ? `Выполнено ${progress.done} из ${progress.target} запланированных подходов. Незавершённые подходы останутся пропущенными.`
         : `Все ${progress.target} подходов выполнены. Сохранить тренировку в истории?`,
       [
-        {text: early ? 'Продолжить тренировку' : 'Отмена', style: 'cancel'},
+        {text: early ? 'Продолжить тренировку' : 'Отмена', style: 'cancel', onPress: () => releaseAction('confirmingFinish')},
         {text: 'Завершить', onPress: () => { void finishConfirmed(); }},
       ],
+      {cancelable: true, onDismiss: () => releaseAction('confirmingFinish')},
     );
   }
 
   function requestCancel() {
+    if (action.current) return;
+    action.current = 'confirmingCancel';
     Alert.alert(
       'Отменить тренировку?',
       'Записанные подходы останутся в отменённой тренировке, но не будут учитываться как завершённая тренировка.',
       [
-        {text: 'Остаться', style: 'cancel'},
+        {text: 'Остаться', style: 'cancel', onPress: () => releaseAction('confirmingCancel')},
         {
           text: 'Отменить тренировку',
           style: 'destructive',
           onPress: () => {
-            setCancelling(true);
-            setRestDeadline(null);
-            void restTimerCoordinator.invalidate().then(onCancel).catch(e => setError(e instanceof Error ? e.message : 'Не удалось отменить тренировку.')).finally(() => setCancelling(false));
+            void cancelConfirmed();
           },
         },
       ],
+      {cancelable: true, onDismiss: () => releaseAction('confirmingCancel')},
     );
+  }
+
+  async function cancelConfirmed() {
+    if (action.current !== 'confirmingCancel') return;
+    action.current = 'cancelling';
+    try {
+      setCancelling(true);
+      setError('');
+      setRestDeadline(null);
+      await restTimerCoordinator.invalidate();
+      await onCancel();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Не удалось отменить тренировку.');
+    } finally {
+      setCancelling(false);
+      releaseAction('cancelling');
+    }
   }
 
   return (
@@ -305,10 +357,10 @@ export function ActiveWorkoutScreen({
         </Pressable>
       </View>
 
-      <Pressable style={[styles.finish, finishing && styles.disabled]} onPress={requestFinish} disabled={finishing || cancelling} accessibilityRole="button" accessibilityLabel="Завершить тренировку" testID="workout-finish">
+      <Pressable style={[styles.finish, (saving || finishing || cancelling) && styles.disabled]} onPress={requestFinish} disabled={saving || finishing || cancelling} accessibilityRole="button" accessibilityLabel="Завершить тренировку" testID="workout-finish">
         {finishing ? <ActivityIndicator /> : <Text style={styles.finishText}>Завершить тренировку</Text>}
       </Pressable>
-      <Pressable style={[styles.cancel, cancelling && styles.disabled]} onPress={requestCancel} disabled={finishing || cancelling} accessibilityRole="button" accessibilityLabel="Отменить тренировку" testID="workout-cancel">
+      <Pressable style={[styles.cancel, (saving || finishing || cancelling) && styles.disabled]} onPress={requestCancel} disabled={saving || finishing || cancelling} accessibilityRole="button" accessibilityLabel="Отменить тренировку" testID="workout-cancel">
         {cancelling ? <ActivityIndicator /> : <Text style={styles.cancelText}>Отменить тренировку</Text>}
       </Pressable>
       <ExerciseGuide exercise={current.exercise} visible={guideOpen} onClose={() => setGuideOpen(false)} />

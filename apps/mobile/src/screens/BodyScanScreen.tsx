@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, BodyScanComparison, BodyScanDetails} from '../api/client';
 import {AppButton} from '../components/AppButton';
@@ -16,6 +16,11 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
   const [items, setItems] = useState<BodyScanDetails[]>([]);
   const [current, setCurrent] = useState<BodyScanDetails | null>(null);
   const [comparison, setComparison] = useState<BodyScanComparison | null>(null);
+  const [comparisonError, setComparisonError] = useState('');
+  const [expandedScanId, setExpandedScanId] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<{key: string; uri: string} | null>(null);
+  const [photoLoading, setPhotoLoading] = useState<string | null>(null);
+  const photoRequest = useRef(0);
   const [previews, setPreviews] = useState<Partial<Record<ViewID, string>>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
@@ -29,13 +34,28 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
       setItems(list.items);
       const draft = list.items.find(item => item.scan.status === 'draft');
       setCurrent(draft ?? null);
-      try { setComparison(await api.latestBodyScanComparison(accessToken)); } catch { setComparison(null); }
+      try { setComparison(await api.latestBodyScanComparison(accessToken)); setComparisonError(''); }
+      catch (e) { setComparison(null); setComparisonError(e instanceof Error ? e.message : 'Не удалось загрузить сравнение'); }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось загрузить Body Scan');
     } finally { setLoading(false); }
   }, [accessToken]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => () => { photoRequest.current += 1; }, []);
+
+  async function showSavedPhoto(scanId: string, view: ViewID) {
+    const key = `${scanId}:${view}`;
+    if (selectedPhoto?.key === key) { setSelectedPhoto(null); return; }
+    const requestId = ++photoRequest.current;
+    setPhotoLoading(key);
+    setError('');
+    try {
+      const uri = await api.bodyScanPhoto(accessToken, scanId, view);
+      if (photoRequest.current === requestId) setSelectedPhoto({key, uri});
+    } catch (e) { if (photoRequest.current === requestId) setError(e instanceof Error ? e.message : 'Не удалось открыть фото'); }
+    finally { if (photoRequest.current === requestId) setPhotoLoading(null); }
+  }
 
   async function ensureScan(manageBusy = true) {
     if (current) return current;
@@ -55,6 +75,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
       const image = await bodyPhotoCapture.captureImage();
       const next = await api.putBodyScanPhoto(accessToken, scan.scan.id, view, image);
       setPreviews(prev => ({...prev, [view]: image}));
+      setSelectedPhoto(null);
       setCurrent(next);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Не удалось сохранить фотографию';
@@ -77,7 +98,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
     Alert.alert('Удалить Body Scan?', 'Черновик и уже снятые фотографии будут удалены безвозвратно.', [
       {text: 'Отмена', style: 'cancel'},
       {text: 'Удалить', style: 'destructive', onPress: () => void (async () => {
-        try { setBusy('complete'); await api.deleteBodyScan(accessToken, current.scan.id); setCurrent(null); setPreviews({}); await load(); }
+        try { setBusy('complete'); await api.deleteBodyScan(accessToken, current.scan.id); setCurrent(null); setPreviews({}); setSelectedPhoto(null); await load(); }
         catch (e) { setError(e instanceof Error ? e.message : 'Не удалось удалить Body Scan'); }
         finally { setBusy(null); }
       })()},
@@ -91,6 +112,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
       await api.completeBodyScan(accessToken, current.scan.id);
       setCurrent(null);
       setPreviews({});
+      setSelectedPhoto(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось завершить Body Scan');
@@ -105,6 +127,7 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
         try {
           setError(''); setBusy(`delete-${item.scan.id}`);
           await api.deleteBodyScan(accessToken, item.scan.id);
+          if (selectedPhoto?.key.startsWith(`${item.scan.id}:`)) setSelectedPhoto(null);
           await load();
         } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось удалить Body Scan'); }
         finally { setBusy(null); }
@@ -156,6 +179,8 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
                   <Text style={[styles.status, saved && styles.statusDone]}>{saved ? '✓' : '○'}</Text>
                 </View>
                 {preview ? <Image source={{uri: preview}} style={styles.preview} resizeMode="cover" /> : null}
+                {saved && !preview ? <AppButton label={photoLoading===`${current.scan.id}:${item.id}`?'Загружаем фото…':'Посмотреть сохранённое фото'} variant="secondary" disabled={Boolean(photoLoading)} onPress={()=>void showSavedPhoto(current.scan.id,item.id)}/>:null}
+                {selectedPhoto?.key===`${current.scan.id}:${item.id}` ? <Image source={{uri:selectedPhoto.uri}} style={styles.preview} resizeMode="contain" /> : null}
                 {saved ? (
                   <View style={styles.quality}>
                     <Text style={styles.qualityText}>{saved.width}×{saved.height} · свет {saved.brightness.toFixed(0)} · контраст {saved.contrast.toFixed(0)}</Text>
@@ -194,11 +219,12 @@ export function BodyScanScreen({accessToken, onBack}: {accessToken: string; onBa
           <Text style={styles.cvPending}>Оценка отражает только сопоставимость условий съёмки. Она не анализирует фигуру, состав тела, здоровье или медицинские изменения.</Text>
         </View>
       ) : null}
+      {comparisonError && completed.length > 1 ? <View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>Не удалось загрузить сравнение: {comparisonError}</Text><AppButton label="Повторить сравнение" variant="secondary" onPress={()=>void load()}/></View> : null}
 
       <Text style={styles.section}>История</Text>
       {completed.length === 0 ? <Text style={styles.muted}>Пока нет завершённых сканов.</Text> : completed.map(item => (
         <View key={item.scan.id} style={styles.historyCard}>
-          <View style={styles.historyText}><Text style={styles.cardTitle}>{new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU')}</Text><Text style={styles.muted}>{item.photos.length} ракурса · приватное хранение</Text></View>
+          <View style={styles.historyText}><Pressable accessibilityRole="button" accessibilityLabel="Показать сведения о Body Scan" onPress={()=>setExpandedScanId(id=>id===item.scan.id?null:item.scan.id)}><Text style={styles.cardTitle}>{new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU')}</Text><Text style={styles.muted}>{item.photos.length} ракурса · {expandedScanId===item.scan.id?'Скрыть сведения':'Показать сведения'}</Text></Pressable>{expandedScanId===item.scan.id ? item.photos.map(photo=><View key={photo.id}><Text style={styles.muted}>{viewTitle(photo.view as ViewID)} · {photo.width}×{photo.height} · {photo.quality_status==='accepted'?'качество принято':'есть замечания'}{photo.quality_issues?.length?` · ${photo.quality_issues.map(issueLabel).join('; ')}`:''}</Text><AppButton label={`${photoLoading===`${item.scan.id}:${photo.view}`?'Загружаем':'Посмотреть'} фото: ${viewTitle(photo.view as ViewID)}`} variant="secondary" disabled={Boolean(photoLoading)} onPress={()=>void showSavedPhoto(item.scan.id,photo.view)}/>{selectedPhoto?.key===`${item.scan.id}:${photo.view}`?<Image source={{uri:selectedPhoto.uri}} style={styles.preview} resizeMode="contain"/>:null}</View>):null}</View>
           <Pressable accessibilityRole="button" accessibilityLabel={`Удалить Body Scan от ${new Date(item.scan.completed_at ?? item.scan.created_at).toLocaleDateString('ru-RU')}`} disabled={busy !== null} onPress={() => removeCompleted(item)} hitSlop={8}><Text style={styles.delete}>{busy === `delete-${item.scan.id}` ? '…' : 'Удалить'}</Text></Pressable>
         </View>
       ))}

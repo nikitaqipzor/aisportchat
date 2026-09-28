@@ -8,6 +8,7 @@ import {MuscleId, muscleIds, muscleMeta} from '../domain/muscles';
 import {colors, control, radius, spacing} from '../theme/tokens';
 import {LatestRequestGuard} from '../domain/latestRequest';
 import {sessionStorage} from '../storage/session';
+import {healthConnect, HealthConnectStatus} from '../native/healthConnect';
 
 type Environment = 'home' | 'gym' | 'band';
 
@@ -44,6 +45,8 @@ export function HomeScreen({
   const [profileLoading, setProfileLoading] = useState(true);
   const [readinessLoading, setReadinessLoading] = useState(true);
   const [readinessError, setReadinessError] = useState(false);
+  const [deviceStatus, setDeviceStatus] = useState<HealthConnectStatus | null>(null);
+  const [deviceStatusChecked, setDeviceStatusChecked] = useState(false);
   const [profileState, setProfileState] = useState<'loading'|'loaded'|'cached-stale'|'error'>('loading');
   const profileGuard = useRef(new LatestRequestGuard());
   const readinessGuard = useRef(new LatestRequestGuard());
@@ -77,6 +80,8 @@ export function HomeScreen({
     void loadProfile();
     const isLatest = readinessGuard.current.begin();
     setReadinessLoading(true); setReadinessError(false);
+    setReadiness(null); setDeviceStatus(null); setDeviceStatusChecked(false);
+    void healthConnect.status().then(value => {if(isLatest())setDeviceStatus(value)}).catch(() => {if(isLatest())setDeviceStatus(null)}).finally(() => {if(isLatest())setDeviceStatusChecked(true)});
     api.recoveryToday(accessToken, currentLocalDate()).then(value => {if(isLatest())setReadiness(value)}).catch(() => {if(isLatest())setReadinessError(true)}).finally(() => {if(isLatest())setReadinessLoading(false)});
     return () => { profileGuard.current.invalidate(); readinessGuard.current.invalidate(); };
   }, [accessToken, loadProfile]);
@@ -84,6 +89,11 @@ export function HomeScreen({
   useEffect(() => () => {profileGuard.current.unmount();readinessGuard.current.unmount()}, []);
 
   const environmentReady = environment !== null && allowedEnvironments.includes(environment);
+  const wearableToday = readiness?.wearable?.date === currentLocalDate() ? readiness.wearable : null;
+  const deviceGranted = deviceStatus?.sdk_status === 'available' && deviceStatus.permissions_granted;
+  const deviceFresh = readiness?.health_insights?.freshness.status === 'fresh';
+  const deviceTitle = readinessLoading || !deviceStatusChecked ? 'Проверяем подключение…' : !deviceStatus ? 'Не удалось проверить подключение' : !deviceGranted ? 'Разрешить доступ к часам' : readinessError ? 'Не удалось проверить данные' : wearableToday && deviceFresh ? 'Данные часов обновлены' : wearableToday ? 'Обновить данные часов' : 'Синхронизировать часы';
+  const deviceDescription = !deviceStatusChecked ? 'Проверяем Health Connect' : !deviceStatus ? 'Открой устройства и повтори проверку' : !deviceGranted ? 'Health Connect · проверь разрешения' : wearableToday ? `${wearableToday.source_label} · ${deviceFresh ? 'сегодня' : 'данные требуют обновления'} · сон ${Math.floor(wearableToday.sleep_minutes / 60)} ч ${wearableToday.sleep_minutes % 60} мин` : 'Mi Fitness через Health Connect · сон · шаги · тренировки';
 
   return (
     <ScrollView testID="home-screen" contentContainerStyle={styles.container}>
@@ -174,8 +184,8 @@ export function HomeScreen({
         style={({pressed}) => [styles.deviceCard, pressed && styles.pressed]}>
         <View style={styles.flexShrink}>
           <Text style={styles.programKicker}>ЗДОРОВЬЕ И ЧАСЫ</Text>
-          <Text style={styles.deviceTitle}>{readinessLoading ? 'Проверяем подключение…' : readiness?.wearable ? 'Часы синхронизированы' : 'Подключить часы'}</Text>
-          <Text style={styles.programMeta}>{readiness?.wearable ? `${readiness.wearable.source_label} · сон ${Math.floor(readiness.wearable.sleep_minutes/60)} ч ${readiness.wearable.sleep_minutes%60} мин` : 'Xiaomi Watch S3 · сон · шаги · тренировки'}</Text>
+          <Text style={styles.deviceTitle}>{deviceTitle}</Text>
+          <Text style={styles.programMeta}>{deviceDescription}</Text>
         </View>
         <Text style={styles.programArrow}>→</Text>
       </Pressable>

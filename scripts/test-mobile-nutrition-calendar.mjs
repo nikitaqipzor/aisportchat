@@ -13,11 +13,12 @@ try {
   const output = ts.transpileModule(source, {compilerOptions: {target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS}}).outputText;
   fs.writeFileSync(path.join(target, 'date.js'), output);
   const load = createRequire(path.join(target, 'entry.js'));
-  const {currentLocalDate, shiftLocalDate, localTimeZone, nextNutritionDateOnRollover} = load('./date.js');
+  const {currentLocalDate, shiftLocalDate, localTimeZone, nextNutritionDateOnRollover, formatCalendarDate} = load('./date.js');
   const oldZone = process.env.TZ;
   try {
     process.env.TZ = 'America/New_York';
     assert.equal(localTimeZone(), 'America/New_York');
+    assert.equal(formatCalendarDate('2026-09-02T00:00:00Z'), '02.09.2026', 'program calendar dates must not shift to previous day west of UTC');
     assert.equal(shiftLocalDate('2026-03-08', 1), '2026-03-09');
     assert.equal(shiftLocalDate('2026-11-01', -1), '2026-10-31');
     process.env.TZ = 'Europe/Moscow';

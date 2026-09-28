@@ -3,6 +3,7 @@ package workouts
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +72,31 @@ func workoutFixture(t *testing.T) (*Service, *store.Memory, string) {
 		t.Fatal(err)
 	}
 	return NewService(st, NewEngine(catalog.Exercises)), st, user.ID
+}
+
+func TestLogSetRejectsNonFiniteMeasurementsBeforeWriting(t *testing.T) {
+	ctx := context.Background()
+	svc, st, userID := workoutFixture(t)
+	planned, err := svc.Generate(ctx, userID, GenerateInput{Muscle: "chest", Environment: "gym", DurationMinutes: 45})
+	if err != nil { t.Fatal(err) }
+	active, err := svc.Start(ctx, userID, planned.Workout.ID)
+	if err != nil { t.Fatal(err) }
+	exerciseID := active.Exercises[0].WorkoutExercise.ID
+	values := []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
+	for _, value := range values {
+		for _, field := range []string{"weight", "rpe", "rir"} {
+			in := SetInput{WorkoutExerciseID: exerciseID, SetNumber: 1, Repetitions: 8}
+			switch field {
+			case "weight": in.Weight = &value
+			case "rpe": in.RPE = &value
+			case "rir": in.RIR = &value
+			}
+			if _, err := svc.LogSet(ctx, userID, active.Workout.ID, in); err == nil { t.Fatalf("%s=%v accepted", field, value) }
+			if _, err := svc.LogSetOperation(ctx, userID, active.Workout.ID, "finite-check-0001", in); err == nil { t.Fatalf("keyed %s=%v accepted", field, value) }
+		}
+	}
+	stored, err := st.GetWorkout(ctx, userID, active.Workout.ID)
+	if err != nil || len(stored.Sets) != 0 { t.Fatalf("invalid measurement wrote sets: %+v, %v", stored.Sets, err) }
 }
 
 func TestServiceRequiresOnboardingAndAllowedEnvironment(t *testing.T) {

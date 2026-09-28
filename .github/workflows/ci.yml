@@ -13,6 +13,7 @@ jobs:
         run: |
           ./scripts/verify-staging-deploy.sh
           ./scripts/verify-railway-deploy.sh
+          bash ./scripts/test-preflight-connected-api.sh
       - name: Build Railway API image
         run: docker build -f services/api/Dockerfile -t athletica-api:railway .
 
@@ -44,6 +45,8 @@ jobs:
       - name: Install PostgreSQL client/libpq
         run: sudo apt-get update && sudo apt-get install -y postgresql-client libpq-dev
       - name: Migration up/down/up smoke
+        env:
+          ALLOW_DESTRUCTIVE_MIGRATION_SMOKE: "1"
         run: ./scripts/postgres-migration-smoke.sh
       - name: Railway DATABASE_URL migration runner
         env:
@@ -81,6 +84,8 @@ jobs:
           node scripts/test-mobile-body-scan.mjs
           node scripts/test-mobile-health-passive-sync.mjs
           node scripts/test-mobile-core-screens.mjs
+          node apps/mobile/src/screens/ProgramsScreen.test.mjs
+          node scripts/test-mobile-workout-offline-operations.mjs
           node scripts/test-mobile-analytics-races.mjs
           node scripts/test-mobile-home-reliability.mjs
           node scripts/test-mobile-nutrition-regressions.mjs
@@ -89,6 +94,7 @@ jobs:
           node scripts/test-mobile-nutrition-calendar.mjs
           node scripts/test-mobile-food-idempotency.mjs
           node scripts/test-mobile-devices-status.mjs
+          node scripts/test-mobile-device-display.mjs
           node scripts/test-mobile-design-accessibility.mjs
 
   android-internal:
@@ -111,6 +117,10 @@ jobs:
           "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" "ndk;27.1.12297006"
       - name: Install mobile dependencies
         run: ./scripts/ci-mobile-install.sh
+      - name: Mobile async behavior regressions
+        run: |
+          node apps/mobile/src/screens/ActiveWorkoutScreen.test.mjs
+          node apps/mobile/src/storage/offlineQueue.test.mjs
       - name: Typecheck
         working-directory: apps/mobile
         run: npm run typecheck

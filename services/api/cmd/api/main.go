@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/example/ai-fitness-os/services/api/internal/aifitness"
 	"github.com/example/ai-fitness-os/services/api/internal/auth"
+	"github.com/example/ai-fitness-os/services/api/internal/bodyscan"
 	"github.com/example/ai-fitness-os/services/api/internal/httpapi"
 	"github.com/example/ai-fitness-os/services/api/internal/media"
 	"github.com/example/ai-fitness-os/services/api/internal/store"
@@ -36,9 +38,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("media store init failed: %v", err)
 	}
+	cleanupCtx, cleanupCancel := context.WithCancel(context.Background())
+	defer cleanupCancel()
+	httpapi.StartMediaCleanupWorker(cleanupCtx, st, mediaStore)
+	bodyscan.StartMediaCleanupWorker(cleanupCtx, st, mediaStore)
+	handler, err := httpapi.TrustedProxyClientIPHandler(
+		httpapi.NewServerWithAIAndMedia(st, tm, aiProvider, mediaStore),
+		os.Getenv("AUTH_TRUSTED_PROXY_CIDRS"),
+	)
+	if err != nil {
+		log.Fatalf("trusted proxy configuration invalid: %v", err)
+	}
 	server := &http.Server{
 		Addr:              ":" + port,
-		Handler:           httpapi.NewServerWithAIAndMedia(st, tm, aiProvider, mediaStore),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

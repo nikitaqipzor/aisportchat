@@ -2,9 +2,12 @@ package programs
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -148,8 +151,41 @@ func (s *Service) Get(ctx context.Context, userID, programID string) (store.Prog
 	}
 	return s.refreshMissed(ctx, userID, p, time.Now().UTC())
 }
-func (s *Service) History(ctx context.Context, userID string, limit int) ([]store.ProgramWithSessions, error) {
-	return s.store.ListPrograms(ctx, userID, limit)
+var ErrInvalidHistoryCursor = errors.New("invalid program history cursor")
+
+var programCursorID = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+
+type historyCursor struct {
+	UpdatedAt string `json:"updated_at"`
+	ID string `json:"id"`
+}
+
+func (s *Service) HistoryPage(ctx context.Context, userID string, limit int, cursor string) ([]store.ProgramWithSessions, bool, string, error) {
+	if limit <= 0 || limit > 50 { limit = 20 }
+	var before *store.ProgramHistoryCursor
+	if cursor != "" {
+		if len(cursor) > 512 { return nil, false, "", ErrInvalidHistoryCursor }
+		data, err := base64.RawURLEncoding.DecodeString(cursor)
+		if err != nil { return nil, false, "", ErrInvalidHistoryCursor }
+		var decoded historyCursor
+		if json.Unmarshal(data, &decoded) != nil || !programCursorID.MatchString(decoded.ID) {
+			return nil, false, "", ErrInvalidHistoryCursor
+		}
+		updatedAt, err := time.Parse(time.RFC3339Nano, decoded.UpdatedAt)
+		if err != nil || updatedAt.IsZero() { return nil, false, "", ErrInvalidHistoryCursor }
+		before = &store.ProgramHistoryCursor{UpdatedAt: updatedAt, ID: decoded.ID}
+	}
+	items, err := s.store.ListPrograms(ctx, userID, limit+1, before)
+	if err != nil { return nil, false, "", err }
+	hasMore := len(items) > limit
+	if hasMore { items = items[:limit] }
+	next := ""
+	if hasMore {
+		last := items[len(items)-1].Program
+		data, _ := json.Marshal(historyCursor{UpdatedAt: last.UpdatedAt.Format(time.RFC3339Nano), ID: last.ID})
+		next = base64.RawURLEncoding.EncodeToString(data)
+	}
+	return items, hasMore, next, nil
 }
 
 func (s *Service) Session(ctx context.Context, userID, sessionID string) (store.ProgramSession, error) {

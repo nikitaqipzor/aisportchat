@@ -95,6 +95,33 @@ func TestRegistrationAndOnboardingFlow(t *testing.T) {
 	}
 }
 
+func TestHealthzReleaseIdentity(t *testing.T) {
+	t.Run("configured release id is returned trimmed", func(t *testing.T) {
+		t.Setenv("PILOT_RELEASE_ID", "  pilot-2026-09-27  ")
+		rr := httptest.NewRecorder()
+		NewServer().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"release_id":"pilot-2026-09-27"`) {
+			t.Fatalf("health response status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		for _, forbidden := range []string{"PILOT_RELEASE_ID", "AUTH_TOKEN_SECRET", "DATABASE_URL", "OPENAI_API_KEY"} {
+			if strings.Contains(rr.Body.String(), forbidden) {
+				t.Fatalf("health response leaked %q: %s", forbidden, rr.Body.String())
+			}
+		}
+	})
+
+	for _, value := range []string{"", "   "} {
+		t.Run("omits blank release id", func(t *testing.T) {
+			t.Setenv("PILOT_RELEASE_ID", value)
+			rr := httptest.NewRecorder()
+			NewServer().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+			if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), `"release_id"`) {
+				t.Fatalf("health response status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestAthleteProfileValidation(t *testing.T) {
 	st := store.NewMemory()
 	tm := auth.NewTokenManager("test-secret", 15*time.Minute, 24*time.Hour)
