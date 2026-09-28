@@ -27,14 +27,14 @@ for file in "$MIGRATIONS_DIR"/*.up.sql; do
     echo "BEGIN;"
     echo "SELECT pg_advisory_xact_lock(20260928, 23001);"
     printf "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = '%s') AS already_applied \\gset\n" "$name"
-    echo '\if :already_applied'
-    echo "\\echo Skipping $name (already applied)"
+    printf '%s\n' '\if :already_applied'
+    printf '\\echo Skipping %s (already applied)\n' "$name"
     echo "ROLLBACK;"
-    echo '\else'
-    echo "\\echo Applying $name"
+    printf '%s\n' '\else'
+    printf '\\echo Applying %s\n' "$name"
     cat "$file"
     printf "\nINSERT INTO schema_migrations(filename) VALUES ('%s');\n" "$name"
     echo "COMMIT;"
-    echo '\endif'
+    printf '%s\n' '\endif'
   } | run_psql -v ON_ERROR_STOP=1
 done
