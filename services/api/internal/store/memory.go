@@ -276,6 +276,20 @@ func (m *Memory) GetRefreshSession(_ context.Context, tokenHash string) (Refresh
 	return s, nil
 }
 
+func (m *Memory) ConsumeRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error) {
+	if err := ctx.Err(); err != nil { return RefreshSession{}, err }
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[tokenHash]
+	if !ok || s.RevokedAt != nil || !time.Now().UTC().Before(s.ExpiresAt) {
+		return RefreshSession{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	s.RevokedAt = &now
+	m.sessions[tokenHash] = s
+	return s, nil
+}
+
 func (m *Memory) RevokeRefreshSession(_ context.Context, tokenHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -416,6 +430,7 @@ func (m *Memory) StartWorkout(_ context.Context, userID, workoutID string) (Work
 }
 
 func (m *Memory) UpsertWorkoutSet(_ context.Context, userID, workoutID string, set WorkoutSet) (WorkoutDetails, error) {
+	if !validWorkoutSetMeasurements(set) { return WorkoutDetails{}, ErrInvalidState }
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	w, ok := m.workouts[workoutID]

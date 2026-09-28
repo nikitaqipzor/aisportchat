@@ -7,10 +7,14 @@ import (
 )
 
 func (m *Memory) DeleteAccount(ctx context.Context, userID string, cleanup func(context.Context) error) error {
+	// Keyed workout writes acquire workoutOperationMu before mu. Use the same
+	// order so deletion cannot leave a receipt containing deleted health data.
+	m.workoutOperationMu.Lock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	u, ok := m.users[userID]
 	if !ok {
+		m.workoutOperationMu.Unlock()
 		return ErrNotFound
 	}
 	m.pendingMedia[userID] = true
@@ -30,6 +34,9 @@ func (m *Memory) DeleteAccount(ctx context.Context, userID string, cleanup func(
 			delete(m.workoutSets, id)
 		}
 	}
+	for key := range m.workoutOperations {
+		if strings.HasPrefix(key, userID+":") { delete(m.workoutOperations, key) }
+	}
 	records := m.records[:0]
 	for _, v := range m.records { if v.UserID != userID { records = append(records, v) } }
 	m.records = records
@@ -47,6 +54,7 @@ func (m *Memory) DeleteAccount(ctx context.Context, userID string, cleanup func(
 	for id, v := range m.healthSnapshots { if v.UserID == userID { delete(m.healthSnapshots, id) } }
 	for id, v := range m.programs { if v.UserID == userID { delete(m.programs, id); delete(m.programSessions, id) } }
 	m.mu.Unlock()
+	m.workoutOperationMu.Unlock()
 	err := cleanup(ctx)
 	m.mu.Lock()
 	if err != nil { return errors.Join(ErrMediaPending, err) }

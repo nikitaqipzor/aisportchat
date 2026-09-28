@@ -318,13 +318,13 @@ func (s *Service) logSet(ctx context.Context, userID, workoutID, operationID str
 	if in.WorkoutExerciseID == "" || in.SetNumber < 1 || in.Repetitions < 1 || in.Repetitions > 200 {
 		return WorkoutView{}, errors.New("invalid set data")
 	}
-	if in.Weight != nil && (*in.Weight < 0 || *in.Weight > 1000) {
+	if in.Weight != nil && (math.IsNaN(*in.Weight) || math.IsInf(*in.Weight, 0) || *in.Weight < 0 || *in.Weight > 1000) {
 		return WorkoutView{}, errors.New("weight must be between 0 and 1000")
 	}
-	if in.RPE != nil && (*in.RPE < 1 || *in.RPE > 10) {
+	if in.RPE != nil && (math.IsNaN(*in.RPE) || math.IsInf(*in.RPE, 0) || *in.RPE < 1 || *in.RPE > 10) {
 		return WorkoutView{}, errors.New("rpe must be between 1 and 10")
 	}
-	if in.RIR != nil && (*in.RIR < 0 || *in.RIR > 10) {
+	if in.RIR != nil && (math.IsNaN(*in.RIR) || math.IsInf(*in.RIR, 0) || *in.RIR < 0 || *in.RIR > 10) {
 		return WorkoutView{}, errors.New("rir must be between 0 and 10")
 	}
 	set := store.WorkoutSet{

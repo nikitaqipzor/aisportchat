@@ -45,6 +45,8 @@ jobs:
       - name: Install PostgreSQL client/libpq
         run: sudo apt-get update && sudo apt-get install -y postgresql-client libpq-dev
       - name: Migration up/down/up smoke
+        env:
+          ALLOW_DESTRUCTIVE_MIGRATION_SMOKE: "1"
         run: ./scripts/postgres-migration-smoke.sh
       - name: Railway DATABASE_URL migration runner
         env:

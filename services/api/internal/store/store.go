@@ -359,6 +359,7 @@ type Store interface {
 
 	SaveRefreshSession(ctx context.Context, session RefreshSession) error
 	GetRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error)
+	ConsumeRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error)
 	RevokeRefreshSession(ctx context.Context, tokenHash string) error
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 

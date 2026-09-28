@@ -16,23 +16,25 @@ run_psql() {
 }
 
 run_psql -v ON_ERROR_STOP=1 \
-  -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());"
+  -c "BEGIN; SELECT pg_advisory_xact_lock(20260928, 23001); CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()); COMMIT;"
 
 for file in "$MIGRATIONS_DIR"/*.up.sql; do
   [ -f "$file" ] || continue
   name="$(basename "$file")"
-  applied="$(run_psql -Atq -c "SELECT 1 FROM schema_migrations WHERE filename = '$name' LIMIT 1;")"
-
-  if [ "$applied" = "1" ]; then
-    echo "Skipping $name (already applied)"
-    continue
-  fi
-
-  echo "Applying $name"
+  # Serialize deploys and check the ledger only after acquiring the lock.
+  # The transaction-scoped lock is released with this migration's commit.
   {
     echo "BEGIN;"
+    echo "SELECT pg_advisory_xact_lock(20260928, 23001);"
+    printf "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE filename = '%s') AS already_applied \\gset\n" "$name"
+    echo '\if :already_applied'
+    echo "\\echo Skipping $name (already applied)"
+    echo "ROLLBACK;"
+    echo '\else'
+    echo "\\echo Applying $name"
     cat "$file"
     printf "\nINSERT INTO schema_migrations(filename) VALUES ('%s');\n" "$name"
     echo "COMMIT;"
+    echo '\endif'
   } | run_psql -v ON_ERROR_STOP=1
 done

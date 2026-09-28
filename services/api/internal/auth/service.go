@@ -52,11 +52,10 @@ func (s *Service) Login(ctx context.Context, email, password string) (store.User
 
 func (s *Service) Refresh(ctx context.Context, refreshRaw string) (Tokens, error) {
 	hash := HashRefreshToken(refreshRaw)
-	sess, err := s.store.GetRefreshSession(ctx, hash)
-	if err != nil || sess.RevokedAt != nil || time.Now().UTC().After(sess.ExpiresAt) {
+	sess, err := s.store.ConsumeRefreshSession(ctx, hash)
+	if err != nil {
 		return Tokens{}, errors.New("invalid refresh token")
 	}
-	_ = s.store.RevokeRefreshSession(ctx, hash)
 	return s.issueTokens(ctx, sess.UserID)
 }
 

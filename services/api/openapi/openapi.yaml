@@ -5,6 +5,18 @@ info:
 servers:
 - url: http://localhost:8080/api/v1
 paths:
+  /readyz:
+    servers:
+    - url: http://localhost:8080
+    get:
+      operationId: readyz
+      summary: API readiness
+      description: Checks the configured backing store; returns no internal connection details.
+      responses:
+        '200':
+          description: Ready to serve requests
+        '503':
+          description: Backing store unavailable
   /healthz:
     servers:
     - url: http://localhost:8080

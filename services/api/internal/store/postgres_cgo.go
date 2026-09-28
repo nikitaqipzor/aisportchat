@@ -483,6 +483,17 @@ func (p *Postgres) GetRefreshSession(ctx context.Context, tokenHash string) (Ref
 	return RefreshSession{TokenHash: val(rows[0], 0), UserID: val(rows[0], 1), ExpiresAt: exp, RevokedAt: revoked}, nil
 }
 
+func (p *Postgres) ConsumeRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error) {
+	rows, err := p.query(ctx, `UPDATE auth_refresh_sessions SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() RETURNING token_hash,user_id::text,expires_at::text,revoked_at::text`, sp(tokenHash))
+	if err != nil { return RefreshSession{}, err }
+	if len(rows) == 0 { return RefreshSession{}, ErrNotFound }
+	exp, err := parseTime(val(rows[0], 2))
+	if err != nil { return RefreshSession{}, err }
+	revoked, err := parseTime(val(rows[0], 3))
+	if err != nil { return RefreshSession{}, err }
+	return RefreshSession{TokenHash: val(rows[0], 0), UserID: val(rows[0], 1), ExpiresAt: exp, RevokedAt: &revoked}, nil
+}
+
 func (p *Postgres) RevokeRefreshSession(ctx context.Context, tokenHash string) error {
 	rows, err := p.query(ctx, `UPDATE auth_refresh_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE token_hash=$1 RETURNING token_hash`, sp(tokenHash))
 	if err != nil {
@@ -576,6 +587,7 @@ func (p *Postgres) StartWorkout(ctx context.Context, userID, workoutID string) (
 }
 
 func (p *Postgres) UpsertWorkoutSet(ctx context.Context, userID, workoutID string, in WorkoutSet) (WorkoutDetails, error) {
+	if !validWorkoutSetMeasurements(in) { return WorkoutDetails{}, ErrInvalidState }
 	rows, err := p.query(ctx, `SELECT 1::text FROM workout_exercises e JOIN workouts w ON w.id=e.workout_id WHERE e.id=$1::uuid AND w.id=$2::uuid AND w.user_id=$3::uuid AND w.status='active'`, sp(in.WorkoutExerciseID), sp(workoutID), sp(userID))
 	if err != nil {
 		return WorkoutDetails{}, err

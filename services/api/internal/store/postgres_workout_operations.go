@@ -11,6 +11,7 @@ import (
 // A receipt is claimed and finalized in the same transaction as the workout
 // change. Concurrent retries wait on the unique key and observe the winner.
 func (p *Postgres) ApplyWorkoutOperation(ctx context.Context, userID, workoutID, operationID, kind, payloadHash string, set WorkoutSet) (WorkoutDetails, error) {
+	if kind == "log_set" && !validWorkoutSetMeasurements(set) { return WorkoutDetails{}, ErrInvalidState }
 	var result WorkoutDetails
 	err := p.withTx(ctx, func() error {
 		claimed, err := p.queryLocked(ctx, `INSERT INTO workout_operations(user_id,operation_id,workout_id,kind,payload_hash) VALUES($1::uuid,$2,$3::uuid,$4,$5) ON CONFLICT(user_id,operation_id) DO NOTHING RETURNING operation_id`, sp(userID), sp(operationID), sp(workoutID), sp(kind), sp(payloadHash))

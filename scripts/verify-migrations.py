@@ -5,9 +5,20 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 migrations = root / "services/api/migrations"
+runner = (migrations / "run.sh").read_text()
+smoke = (root / "scripts/postgres-migration-smoke.sh").read_text()
 pattern = re.compile(r"^(\d{6})_(.+)\.(up|down)\.sql$")
 pairs = {}
 errors = []
+
+if "pg_advisory_xact_lock(20260928, 23001)" not in runner:
+    errors.append("migration runner must serialize ledger creation and DDL with the shared advisory lock")
+if "already_applied \\\\gset" not in runner or "\\if :already_applied" not in runner:
+    errors.append("migration runner must recheck the ledger under the lock before applying DDL")
+if "ALLOW_DESTRUCTIVE_MIGRATION_SMOKE" not in smoke:
+    errors.append("PostgreSQL migration smoke must require explicit disposable-database opt-in")
+if smoke.count('"$MIGRATIONS/run.sh" &') < 2:
+    errors.append("PostgreSQL migration smoke must exercise concurrent migration runners")
 
 for path in migrations.iterdir():
     if not path.is_file() or path.name == "run.sh":
