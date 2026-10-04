@@ -2,6 +2,9 @@ package workouts
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -39,6 +42,12 @@ type SetInput struct {
 	RIR               *float64 `json:"rir,omitempty"`
 }
 
+func operationHash(kind, workoutID string, payload any) string {
+	canonical, _ := json.Marshal(struct { Kind string `json:"kind"`; WorkoutID string `json:"workout_id"`; Payload any `json:"payload"` }{kind, workoutID, payload})
+	sum := sha256.Sum256(canonical)
+	return hex.EncodeToString(sum[:])
+}
+
 type ReplaceInput struct {
 	Reason string `json:"reason,omitempty"`
 }
@@ -74,6 +83,7 @@ type ProgressionRecommendation struct {
 
 type HistoryFilter struct {
 	Limit       int
+	Offset      int
 	Muscle      string
 	Environment string
 	Status      string
@@ -118,7 +128,7 @@ func NewService(st store.Store, engine *Engine) *Service {
 }
 
 func (s *Service) Generate(ctx context.Context, userID string, in GenerateInput) (WorkoutView, error) {
-	return s.generate(ctx, userID, in, 1, 1)
+	return s.generate(ctx, userID, in, 1, 1, "")
 }
 
 // CreateManual persists user-selected workout facts. It deliberately validates
@@ -168,10 +178,28 @@ func (s *Service) GenerateAdapted(ctx context.Context, userID string, in Generat
 	if intensityMultiplier > 1.1 {
 		intensityMultiplier = 1.1
 	}
-	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier)
+	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier, "")
 }
 
-func (s *Service) generate(ctx context.Context, userID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64) (WorkoutView, error) {
+// GenerateAdaptedForSession persists the generated workout and its program link
+// atomically. The public GenerateAdapted API remains unchanged.
+func (s *Service) GenerateAdaptedForSession(ctx context.Context, userID, sessionID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64) (WorkoutView, error) {
+	if volumeMultiplier < 0.4 {
+		volumeMultiplier = 0.4
+	}
+	if volumeMultiplier > 1.2 {
+		volumeMultiplier = 1.2
+	}
+	if intensityMultiplier < 0.7 {
+		intensityMultiplier = 0.7
+	}
+	if intensityMultiplier > 1.1 {
+		intensityMultiplier = 1.1
+	}
+	return s.generate(ctx, userID, in, volumeMultiplier, intensityMultiplier, sessionID)
+}
+
+func (s *Service) generate(ctx context.Context, userID string, in GenerateInput, volumeMultiplier, intensityMultiplier float64, sessionID string) (WorkoutView, error) {
 	status, err := s.store.GetOnboardingStatus(ctx, userID)
 	if err != nil || !status.Completed {
 		return WorkoutView{}, errors.New("complete onboarding before generating a workout")
@@ -224,10 +252,16 @@ func (s *Service) generate(ctx context.Context, userID string, in GenerateInput,
 		})
 	}
 
-	details, err := s.store.CreateWorkout(ctx, store.Workout{
+	workout := store.Workout{
 		UserID: userID, Muscle: generated.Muscle, Environment: generated.Environment,
 		Status: "planned", DurationMinutes: generated.DurationMinutes,
-	}, rows)
+	}
+	var details store.WorkoutDetails
+	if sessionID != "" {
+		details, err = s.store.CreateProgramSessionWorkout(ctx, userID, sessionID, workout, rows)
+	} else {
+		details, err = s.store.CreateWorkout(ctx, workout, rows)
+	}
 	if err != nil {
 		return WorkoutView{}, err
 	}
@@ -266,23 +300,42 @@ func (s *Service) Cancel(ctx context.Context, userID, workoutID string) (Workout
 	return s.view(ctx, userID, details)
 }
 
+func (s *Service) CancelOperation(ctx context.Context, userID, workoutID, operationID string) (WorkoutView, error) {
+	details, err := s.store.ApplyWorkoutOperation(ctx, userID, workoutID, operationID, "cancel_workout", operationHash("cancel_workout", workoutID, nil), store.WorkoutSet{})
+	if err != nil { return WorkoutView{}, err }
+	return s.view(ctx, userID, details)
+}
+
 func (s *Service) LogSet(ctx context.Context, userID, workoutID string, in SetInput) (WorkoutView, error) {
+	return s.logSet(ctx, userID, workoutID, "", in)
+}
+
+func (s *Service) LogSetOperation(ctx context.Context, userID, workoutID, operationID string, in SetInput) (WorkoutView, error) {
+	return s.logSet(ctx, userID, workoutID, operationID, in)
+}
+
+func (s *Service) logSet(ctx context.Context, userID, workoutID, operationID string, in SetInput) (WorkoutView, error) {
 	if in.WorkoutExerciseID == "" || in.SetNumber < 1 || in.Repetitions < 1 || in.Repetitions > 200 {
 		return WorkoutView{}, errors.New("invalid set data")
 	}
-	if in.Weight != nil && (*in.Weight < 0 || *in.Weight > 1000) {
+	if in.Weight != nil && (math.IsNaN(*in.Weight) || math.IsInf(*in.Weight, 0) || *in.Weight < 0 || *in.Weight > 1000) {
 		return WorkoutView{}, errors.New("weight must be between 0 and 1000")
 	}
-	if in.RPE != nil && (*in.RPE < 1 || *in.RPE > 10) {
+	if in.RPE != nil && (math.IsNaN(*in.RPE) || math.IsInf(*in.RPE, 0) || *in.RPE < 1 || *in.RPE > 10) {
 		return WorkoutView{}, errors.New("rpe must be between 1 and 10")
 	}
-	if in.RIR != nil && (*in.RIR < 0 || *in.RIR > 10) {
+	if in.RIR != nil && (math.IsNaN(*in.RIR) || math.IsInf(*in.RIR, 0) || *in.RIR < 0 || *in.RIR > 10) {
 		return WorkoutView{}, errors.New("rir must be between 0 and 10")
 	}
-	details, err := s.store.UpsertWorkoutSet(ctx, userID, workoutID, store.WorkoutSet{
+	set := store.WorkoutSet{
 		WorkoutExerciseID: in.WorkoutExerciseID, SetNumber: in.SetNumber,
 		Weight: cloneFloat(in.Weight), Repetitions: in.Repetitions, RPE: cloneFloat(in.RPE), RIR: cloneFloat(in.RIR),
-	})
+	}
+	var details store.WorkoutDetails
+	var err error
+	if operationID == "" { details, err = s.store.UpsertWorkoutSet(ctx, userID, workoutID, set) } else {
+		details, err = s.store.ApplyWorkoutOperation(ctx, userID, workoutID, operationID, "log_set", operationHash("log_set", workoutID, in), set)
+	}
 	if err != nil {
 		return WorkoutView{}, err
 	}
@@ -352,6 +405,16 @@ func (s *Service) Finish(ctx context.Context, userID, workoutID string) (FinishR
 	if err != nil {
 		return FinishResult{}, err
 	}
+	return s.finishFromDetails(ctx, userID, workoutID, details)
+}
+
+func (s *Service) FinishOperation(ctx context.Context, userID, workoutID, operationID string) (FinishResult, error) {
+	details, err := s.store.ApplyWorkoutOperation(ctx, userID, workoutID, operationID, "finish_workout", operationHash("finish_workout", workoutID, nil), store.WorkoutSet{})
+	if err != nil { return FinishResult{}, err }
+	return s.finishFromDetails(ctx, userID, workoutID, details)
+}
+
+func (s *Service) finishFromDetails(ctx context.Context, userID, workoutID string, details store.WorkoutDetails) (FinishResult, error) {
 	view, err := s.view(ctx, userID, details)
 	if err != nil {
 		return FinishResult{}, err
@@ -382,40 +445,31 @@ func (s *Service) Finish(ctx context.Context, userID, workoutID string) (FinishR
 }
 
 func (s *Service) History(ctx context.Context, userID string, filter HistoryFilter) ([]WorkoutView, error) {
+	page, _, err := s.HistoryPage(ctx, userID, filter)
+	return page, err
+}
+
+func (s *Service) HistoryPage(ctx context.Context, userID string, filter HistoryFilter) ([]WorkoutView, bool, error) {
 	limit := filter.Limit
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	// Pull enough rows before applying MVP filters in the domain layer. This keeps Store simple
-	// and lets us move filtering into SQL later without changing the HTTP contract.
-	items, err := s.store.ListWorkouts(ctx, userID, 100)
+	if filter.Offset < 0 { filter.Offset = 0 }
+	items, err := s.store.ListWorkoutHistory(ctx, userID, store.WorkoutHistoryFilter{Limit: limit + 1, Offset: filter.Offset, Muscle: filter.Muscle, Environment: filter.Environment, Status: filter.Status, Favorite: filter.Favorite})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	out := make([]WorkoutView, 0, min(limit, len(items)))
+	hasMore := len(items) > limit
+	if hasMore { items = items[:limit] }
+	out := make([]WorkoutView, 0, len(items))
 	for _, item := range items {
-		if filter.Muscle != "" && item.Workout.Muscle != filter.Muscle {
-			continue
-		}
-		if filter.Environment != "" && item.Workout.Environment != filter.Environment {
-			continue
-		}
-		if filter.Status != "" && item.Workout.Status != filter.Status {
-			continue
-		}
-		if filter.Favorite != nil && item.Workout.Favorite != *filter.Favorite {
-			continue
-		}
 		view, err := s.view(ctx, userID, item)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, view)
-		if len(out) >= limit {
-			break
-		}
 	}
-	return out, nil
+	return out, hasMore, nil
 }
 
 func (s *Service) Favorite(ctx context.Context, userID, workoutID string, favorite bool) (WorkoutView, error) {

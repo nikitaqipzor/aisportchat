@@ -12,6 +12,7 @@ var (
 	ErrInvalidState = errors.New("invalid state")
 	ErrForbidden    = errors.New("forbidden")
 	ErrIdempotencyConflict = errors.New("idempotency key was already used for another request")
+	ErrMediaPending = errors.New("account deleted; media cleanup pending")
 )
 
 type User struct {
@@ -66,6 +67,12 @@ type OnboardingStatus struct {
 	GoalCompleted     bool `json:"goal_completed"`
 	TrainingCompleted bool `json:"training_completed"`
 	Completed         bool `json:"completed"`
+}
+
+type WorkoutHistoryFilter struct {
+	Limit, Offset int
+	Muscle, Environment, Status string
+	Favorite *bool
 }
 
 type RefreshSession struct {
@@ -264,6 +271,13 @@ type BodyScanDetails struct {
 	Photos []BodyScanPhoto `json:"photos"`
 }
 
+// BodyScanMediaCleanup records uploads before writing bytes and retries orphan
+// deletion after database commits or process restarts.
+type BodyScanMediaCleanup interface {
+	StageBodyScanPhoto(ctx context.Context, userID, scanID, key string) error
+	RetryBodyScanMedia(ctx context.Context, userID string, remove func(context.Context, string) error) error
+}
+
 type TechniqueAnalysis struct {
 	ID                string    `json:"id"`
 	UserID            string    `json:"-"`
@@ -328,6 +342,10 @@ type Store interface {
 	CreateUser(ctx context.Context, email, passwordHash string) (User, error)
 	FindUserByEmail(ctx context.Context, email string) (User, error)
 	FindUserByID(ctx context.Context, id string) (User, error)
+	// DeleteAccount atomically deletes the user and persists a media cleanup job.
+	// ErrMediaPending means the user is gone and an automatic retry is scheduled.
+	DeleteAccount(ctx context.Context, userID string, cleanup func(context.Context) error) error
+	RetryPendingMedia(ctx context.Context, cleanup func(context.Context, string) error) error
 
 	UpsertProfile(ctx context.Context, profile Profile) (Profile, error)
 	GetProfile(ctx context.Context, userID string) (Profile, error)
@@ -341,17 +359,22 @@ type Store interface {
 
 	SaveRefreshSession(ctx context.Context, session RefreshSession) error
 	GetRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error)
+	ConsumeRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error)
 	RevokeRefreshSession(ctx context.Context, tokenHash string) error
 	RevokeAllUserSessions(ctx context.Context, userID string) error
 
 	CreateWorkout(ctx context.Context, workout Workout, exercises []WorkoutExercise) (WorkoutDetails, error)
+	CreateProgramSessionWorkout(ctx context.Context, userID, sessionID string, workout Workout, exercises []WorkoutExercise) (WorkoutDetails, error)
 	GetWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	StartWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	UpsertWorkoutSet(ctx context.Context, userID, workoutID string, set WorkoutSet) (WorkoutDetails, error)
+	// ApplyWorkoutOperation stores the mutation and its user-scoped receipt atomically.
+	ApplyWorkoutOperation(ctx context.Context, userID, workoutID, operationID, kind, payloadHash string, set WorkoutSet) (WorkoutDetails, error)
 	ReplaceWorkoutExercise(ctx context.Context, userID, workoutID, workoutExerciseID string, replacement WorkoutExercise) (WorkoutDetails, error)
 	CompleteWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	CancelWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error)
 	ListWorkouts(ctx context.Context, userID string, limit int) ([]WorkoutDetails, error)
+	ListWorkoutHistory(ctx context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error)
 	LastCompletedWorkout(ctx context.Context, userID, muscle, environment string) (WorkoutDetails, error)
 	LastExercisePerformance(ctx context.Context, userID, exerciseID string) (ExercisePerformance, error)
 	ActiveWorkout(ctx context.Context, userID string) (WorkoutDetails, error)
@@ -391,6 +414,7 @@ type Store interface {
 	UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto) (BodyScanDetails, error)
 	CompleteBodyScan(ctx context.Context, userID, scanID string, completedAt time.Time) (BodyScanDetails, error)
 	DeleteBodyScan(ctx context.Context, userID, scanID string) error
+	BodyScanMediaCleanup
 	SaveTechniqueAnalysis(ctx context.Context, analysis TechniqueAnalysis) (TechniqueAnalysis, error)
 	UpdateTechniqueAnalysisResult(ctx context.Context, userID, analysisID, resultJSON string) error
 	GetTechniqueAnalysis(ctx context.Context, userID, analysisID string) (TechniqueAnalysis, error)
@@ -399,7 +423,7 @@ type Store interface {
 	CreateProgram(ctx context.Context, program Program, sessions []ProgramSession) (ProgramWithSessions, error)
 	GetProgram(ctx context.Context, userID, programID string) (ProgramWithSessions, error)
 	GetActiveProgram(ctx context.Context, userID string) (ProgramWithSessions, error)
-	ListPrograms(ctx context.Context, userID string, limit int) ([]ProgramWithSessions, error)
+	ListPrograms(ctx context.Context, userID string, limit int, before *ProgramHistoryCursor) ([]ProgramWithSessions, error)
 	GetProgramSession(ctx context.Context, userID, sessionID string) (ProgramSession, error)
 	UpdateProgramSession(ctx context.Context, userID string, session ProgramSession) (ProgramSession, error)
 	FindProgramSessionByWorkout(ctx context.Context, userID, workoutID string) (ProgramSession, error)

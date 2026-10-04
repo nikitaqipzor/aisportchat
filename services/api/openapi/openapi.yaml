@@ -5,6 +5,45 @@ info:
 servers:
 - url: http://localhost:8080/api/v1
 paths:
+  /readyz:
+    servers:
+    - url: http://localhost:8080
+    get:
+      operationId: readyz
+      summary: API readiness
+      description: Checks the configured backing store; returns no internal connection details.
+      responses:
+        '200':
+          description: Ready to serve requests
+        '503':
+          description: Backing store unavailable
+  /healthz:
+    servers:
+    - url: http://localhost:8080
+    get:
+      operationId: healthz
+      summary: API health and release identity
+      description: Returns the health status, response time, and an optional non-secret release marker configured with PILOT_RELEASE_ID.
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - time
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  time:
+                    type: string
+                    format: date-time
+                  release_id:
+                    type: string
+                    description: Trimmed PILOT_RELEASE_ID when configured; omitted when unset or blank. Must not contain secrets.
   /auth/register:
     post:
       operationId: register
@@ -75,6 +114,30 @@ paths:
       responses:
         '204':
           description: Logged out
+  /auth/account:
+    delete:
+      operationId: deleteAccount
+      summary: Permanently delete the authenticated account
+      description: Removes the account, refresh sessions, all linked fitness and health data, and locally stored body scan photos. Existing access tokens are rejected after deletion. A server error leaves the deletion unconfirmed and the client should retry; backups follow the deployment retention policy.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Account and user-owned data deleted
+        '202':
+          description: Account and database records deleted; private media cleanup queued for automatic retry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: media_cleanup_pending
+        '401':
+          description: Missing, invalid, expired or deleted account bearer token
+        '500':
+          description: Deletion could not be completed; retry later
   /profile:
     get:
       operationId: getProfile
@@ -356,6 +419,13 @@ paths:
           maximum: 100
           default: 20
       - in: query
+        name: offset
+        description: Number of matching workouts to skip, ordered by creation date descending.
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+      - in: query
         name: muscle
         schema:
           type: string
@@ -383,6 +453,18 @@ paths:
       responses:
         '200':
           description: User workout history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkoutView'
+                  has_more:
+                    type: boolean
   /workouts/progress-summary:
     get:
       operationId: workoutProgressSummary
@@ -500,6 +582,7 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/WorkoutId'
+      - $ref: '#/components/parameters/WorkoutOperationId'
       requestBody:
         required: true
         content:
@@ -514,7 +597,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkoutView'
         '409':
-          description: Workout is not active
+          description: Workout is not active or operation ID belongs to a different request
         '422':
           description: Invalid set values
   /workouts/{workout_id}/exercises/{workout_exercise_id}/replace:
@@ -556,6 +639,7 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/WorkoutId'
+      - $ref: '#/components/parameters/WorkoutOperationId'
       responses:
         '200':
           description: Workout completed with volume and next-session recommendations
@@ -564,7 +648,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/FinishResult'
         '409':
-          description: Workout is not active
+          description: Workout is not active or operation ID belongs to a different request
   /workouts/{workout_id}/cancel:
     post:
       operationId: cancelWorkout
@@ -572,6 +656,7 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/WorkoutId'
+      - $ref: '#/components/parameters/WorkoutOperationId'
       responses:
         '200':
           description: Planned or active workout cancelled; linked program session
@@ -581,7 +666,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/WorkoutView'
         '409':
-          description: Workout cannot be cancelled in its current state
+          description: Workout cannot be cancelled or operation ID belongs to a different request
   /programs/generate:
     post:
       operationId: generateProgram
@@ -620,6 +705,7 @@ paths:
   /programs/history:
     get:
       operationId: listPrograms
+      description: Returns programs in descending updated_at and id order. Pass next_cursor to load the next page.
       security:
       - bearerAuth: []
       parameters:
@@ -630,9 +716,31 @@ paths:
           minimum: 1
           maximum: 50
           default: 20
+      - in: query
+        name: cursor
+        description: Opaque next_cursor from the previous page.
+        schema:
+          type: string
       responses:
         '200':
           description: Program history
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, has_more, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TrainingProgram'
+                  has_more:
+                    type: boolean
+                  next_cursor:
+                    type: string
+                    description: Empty when there are no more programs.
+        '400':
+          description: Invalid limit or cursor.
   /programs/{program_id}:
     get:
       operationId: getProgram
@@ -693,6 +801,8 @@ paths:
             are applied to actual targets
         '200':
           description: Existing linked workout returned idempotently
+        '409':
+          description: Session belongs to a program that is no longer active
   /programs/sessions/{session_id}/reschedule:
     post:
       operationId: rescheduleProgramSession
@@ -922,6 +1032,24 @@ paths:
   /nutrition/entries/{entry_id}/repeat:
     post:
       operationId: repeatFoodEntry
+      description: Repeats an entry. Reusing an idempotency_key for the same action returns its existing result; use a new key for another repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                meal_type:
+                  type: string
+                  enum: [breakfast, lunch, dinner, snack]
+                logged_at:
+                  type: string
+                  format: date-time
+                idempotency_key:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
       security:
       - bearerAuth: []
       parameters:
@@ -1497,6 +1625,16 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
+    WorkoutOperationId:
+      in: header
+      name: Idempotency-Key
+      required: false
+      description: Stable offline operation ID. Replays return the original workout mutation result. The receipt is kept until account deletion; the same user cannot reuse an ID for a different workout, action, or payload. Omit for legacy behavior.
+      schema:
+        type: string
+        minLength: 8
+        maxLength: 128
+        pattern: '^[A-Za-z0-9_.:-]+$'
     WorkoutId:
       in: path
       name: workout_id
@@ -2796,6 +2934,11 @@ components:
         logged_at:
           type: string
           format: date-time
+        idempotency_key:
+          type: string
+          description: Stable key for retries of this write; use a new key for a separate meal.
+          minLength: 8
+          maxLength: 128
     FoodEntry:
       type: object
       required:

@@ -23,6 +23,8 @@ type Memory struct {
 	workouts          map[string]Workout
 	workoutEx         map[string][]WorkoutExercise
 	workoutSets       map[string][]WorkoutSet
+	workoutOperationMu sync.Mutex
+	workoutOperations map[string]workoutOperationReceipt
 	records           []PersonalRecord
 	nutrition         map[string]NutritionProfile
 	foodItems         map[string]FoodItem
@@ -32,11 +34,13 @@ type Memory struct {
 	measurements      map[string][]BodyMeasurement
 	bodyScans         map[string]BodyScan
 	bodyScanPhotos    map[string]map[string]BodyScanPhoto
+	bodyScanMedia     map[string]bodyScanMediaJob
 	techniqueAnalyses map[string]TechniqueAnalysis
 	recoveryCheckIns  map[string]RecoveryCheckIn
 	healthSnapshots   map[string]HealthDailySnapshot
 	programs          map[string]Program
 	programSessions   map[string][]ProgramSession
+	pendingMedia      map[string]bool
 }
 
 func NewMemory() *Memory {
@@ -51,6 +55,7 @@ func NewMemory() *Memory {
 		workouts:          map[string]Workout{},
 		workoutEx:         map[string][]WorkoutExercise{},
 		workoutSets:       map[string][]WorkoutSet{},
+		workoutOperations: map[string]workoutOperationReceipt{},
 		records:           []PersonalRecord{},
 		nutrition:         map[string]NutritionProfile{},
 		foodItems:         seedFoodItems(),
@@ -60,11 +65,13 @@ func NewMemory() *Memory {
 		measurements:      map[string][]BodyMeasurement{},
 		bodyScans:         map[string]BodyScan{},
 		bodyScanPhotos:    map[string]map[string]BodyScanPhoto{},
+		bodyScanMedia:     map[string]bodyScanMediaJob{},
 		techniqueAnalyses: map[string]TechniqueAnalysis{},
 		recoveryCheckIns:  map[string]RecoveryCheckIn{},
 		healthSnapshots:   map[string]HealthDailySnapshot{},
 		programs:          map[string]Program{},
 		programSessions:   map[string][]ProgramSession{},
+		pendingMedia:      map[string]bool{},
 	}
 }
 
@@ -269,6 +276,20 @@ func (m *Memory) GetRefreshSession(_ context.Context, tokenHash string) (Refresh
 	return s, nil
 }
 
+func (m *Memory) ConsumeRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error) {
+	if err := ctx.Err(); err != nil { return RefreshSession{}, err }
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.sessions[tokenHash]
+	if !ok || s.RevokedAt != nil || !time.Now().UTC().Before(s.ExpiresAt) {
+		return RefreshSession{}, ErrNotFound
+	}
+	now := time.Now().UTC()
+	s.RevokedAt = &now
+	m.sessions[tokenHash] = s
+	return s, nil
+}
+
 func (m *Memory) RevokeRefreshSession(_ context.Context, tokenHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -318,6 +339,56 @@ func (m *Memory) CreateWorkout(_ context.Context, w Workout, exercises []Workout
 	return m.detailsLocked(w.ID), nil
 }
 
+// CreateProgramSessionWorkout serializes archive/replacement with creation and
+// linking under the same lock. A duplicate request never inserts a workout.
+func (m *Memory) CreateProgramSessionWorkout(_ context.Context, userID, sessionID string, w Workout, exercises []WorkoutExercise) (WorkoutDetails, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for programID, sessions := range m.programSessions {
+		program := m.programs[programID]
+		if program.UserID != userID {
+			continue
+		}
+		for i := range sessions {
+			if sessions[i].ID != sessionID {
+				continue
+			}
+			if program.Status != "active" || sessions[i].WorkoutID != nil || sessions[i].Status == "completed" || w.UserID != userID {
+				return WorkoutDetails{}, ErrInvalidState
+			}
+			if w.ID == "" {
+				w.ID = newID()
+			}
+			if w.Status == "" {
+				w.Status = "planned"
+			}
+			w.CreatedAt = time.Now().UTC()
+			for j := range exercises {
+				if exercises[j].ID == "" {
+					exercises[j].ID = newID()
+				}
+				exercises[j].WorkoutID = w.ID
+				exercises[j].Position = j + 1
+			}
+			m.workouts[w.ID] = w
+			m.workoutEx[w.ID] = cloneWorkoutExercises(exercises)
+			m.workoutSets[w.ID] = nil
+			sessions[i].WorkoutID = &w.ID
+			if sessions[i].Status == "missed" {
+				sessions[i].Status = "rescheduled"
+			}
+			if sessions[i].AdaptationReason == "" {
+				sessions[i].AdaptationReason = "Тренировка создана по календарю программы."
+			}
+			m.programSessions[programID] = sessions
+			program.UpdatedAt = time.Now().UTC()
+			m.programs[programID] = program
+			return m.detailsLocked(w.ID), nil
+		}
+	}
+	return WorkoutDetails{}, ErrNotFound
+}
+
 func (m *Memory) GetWorkout(_ context.Context, userID, workoutID string) (WorkoutDetails, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -344,6 +415,13 @@ func (m *Memory) StartWorkout(_ context.Context, userID, workoutID string) (Work
 	if w.Status != "planned" {
 		return WorkoutDetails{}, ErrInvalidState
 	}
+	for programID, sessions := range m.programSessions {
+		for _, session := range sessions {
+			if session.WorkoutID != nil && *session.WorkoutID == workoutID && m.programs[programID].Status != "active" {
+				return WorkoutDetails{}, ErrInvalidState
+			}
+		}
+	}
 	now := time.Now().UTC()
 	w.Status = "active"
 	w.StartedAt = &now
@@ -352,6 +430,7 @@ func (m *Memory) StartWorkout(_ context.Context, userID, workoutID string) (Work
 }
 
 func (m *Memory) UpsertWorkoutSet(_ context.Context, userID, workoutID string, set WorkoutSet) (WorkoutDetails, error) {
+	if !validWorkoutSetMeasurements(set) { return WorkoutDetails{}, ErrInvalidState }
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	w, ok := m.workouts[workoutID]
@@ -532,6 +611,26 @@ func (m *Memory) ListWorkouts(_ context.Context, userID string, limit int) ([]Wo
 	for _, w := range items {
 		out = append(out, m.detailsLocked(w.ID))
 	}
+	return out, nil
+}
+
+func (m *Memory) ListWorkoutHistory(_ context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	items := make([]Workout, 0)
+	for _, w := range m.workouts {
+		if w.UserID != userID || filter.Muscle != "" && w.Muscle != filter.Muscle || filter.Environment != "" && w.Environment != filter.Environment || filter.Status != "" && w.Status != filter.Status || filter.Favorite != nil && w.Favorite != *filter.Favorite { continue }
+		items = append(items, w)
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) { return items[i].ID > items[j].ID }
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	start := filter.Offset
+	if start < 0 { start = 0 }; if start > len(items) { start = len(items) }
+	end := start + filter.Limit; if end > len(items) { end = len(items) }
+	out := make([]WorkoutDetails, 0, end-start)
+	for _, item := range items[start:end] { out = append(out, m.detailsLocked(item.ID)) }
 	return out, nil
 }
 
@@ -1131,19 +1230,24 @@ func (m *Memory) GetActiveProgram(_ context.Context, userID string) (ProgramWith
 	return ProgramWithSessions{Program: *best, Sessions: cloneProgramSessions(m.programSessions[best.ID])}, nil
 }
 
-func (m *Memory) ListPrograms(_ context.Context, userID string, limit int) ([]ProgramWithSessions, error) {
+func (m *Memory) ListPrograms(_ context.Context, userID string, limit int, before *ProgramHistoryCursor) ([]ProgramWithSessions, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if limit <= 0 || limit > 50 {
+	if limit <= 0 || limit > 51 {
 		limit = 20
 	}
 	items := make([]Program, 0)
 	for _, p := range m.programs {
-		if p.UserID == userID {
+		if p.UserID == userID && (before == nil || p.UpdatedAt.Before(before.UpdatedAt) || (p.UpdatedAt.Equal(before.UpdatedAt) && p.ID < before.ID)) {
 			items = append(items, p)
 		}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].UpdatedAt.After(items[j].UpdatedAt) })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].UpdatedAt.Equal(items[j].UpdatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].UpdatedAt.After(items[j].UpdatedAt)
+	})
 	if len(items) > limit {
 		items = items[:limit]
 	}
@@ -1327,6 +1431,10 @@ func (m *Memory) UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto) (
 		m.mu.Unlock()
 		return BodyScanDetails{}, ErrInvalidState
 	}
+	if job, ok := m.bodyScanMedia[photo.StorageKey]; !ok || job.userID != photo.UserID {
+		m.mu.Unlock()
+		return BodyScanDetails{}, ErrInvalidState
+	}
 	if photo.ID == "" {
 		photo.ID = newID()
 	}
@@ -1336,7 +1444,11 @@ func (m *Memory) UpsertBodyScanPhoto(ctx context.Context, photo BodyScanPhoto) (
 	if _, ok := m.bodyScanPhotos[photo.ScanID]; !ok {
 		m.bodyScanPhotos[photo.ScanID] = map[string]BodyScanPhoto{}
 	}
+	if previous, ok := m.bodyScanPhotos[photo.ScanID][photo.View]; ok && previous.StorageKey != photo.StorageKey {
+		m.bodyScanMedia[previous.StorageKey] = bodyScanMediaJob{userID: photo.UserID, readyAt: time.Now()}
+	}
 	m.bodyScanPhotos[photo.ScanID][photo.View] = photo
+	delete(m.bodyScanMedia, photo.StorageKey)
 	m.mu.Unlock()
 	return m.GetBodyScan(ctx, photo.UserID, photo.ScanID)
 }
@@ -1371,6 +1483,9 @@ func (m *Memory) DeleteBodyScan(_ context.Context, userID, scanID string) error 
 	scan, ok := m.bodyScans[scanID]
 	if !ok || scan.UserID != userID {
 		return ErrNotFound
+	}
+	for _, photo := range m.bodyScanPhotos[scanID] {
+		m.bodyScanMedia[photo.StorageKey] = bodyScanMediaJob{userID: userID, readyAt: time.Now()}
 	}
 	delete(m.bodyScans, scanID)
 	delete(m.bodyScanPhotos, scanID)

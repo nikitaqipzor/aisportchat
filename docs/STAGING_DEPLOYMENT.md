@@ -14,10 +14,17 @@ This runbook turns the source-only preview into a phone-testable staging system.
 ```bash
 git clone https://github.com/nikitaqipzor/aisportchat.git
 cd aisportchat
+CANDIDATE_BRANCH=your-pr-branch
+CANDIDATE_SHA=your-full-40-character-commit-sha
+git fetch origin "$CANDIDATE_BRANCH"
+git switch --detach "$CANDIDATE_SHA"
 cp infra/staging/.env.example infra/staging/.env
 ```
 
-Edit `.env`. Generate URL-safe secrets with `openssl rand -hex 24` for PostgreSQL and `openssl rand -hex 32` for tokens. Never commit `.env`.
+Use the PR candidate commit rather than a production/main checkout. Edit `.env`
+and set `PILOT_RELEASE_ID` to the same full 40-character SHA. Generate URL-safe
+secrets with `openssl rand -hex 24` for PostgreSQL and `openssl rand -hex 32`
+for tokens. Never commit `.env`. Verify `git rev-parse HEAD` matches the SHA.
 
 ```bash
 docker compose --env-file infra/staging/.env -f infra/staging/docker-compose.yml up -d --build
@@ -32,7 +39,11 @@ Caddy requests and renews the TLS certificate automatically after DNS resolves a
 Back up PostgreSQL and uploaded media before deployment. Then:
 
 ```bash
-git pull --ff-only origin main
+CANDIDATE_BRANCH=your-pr-branch
+CANDIDATE_SHA=your-new-full-40-character-commit-sha
+git fetch origin "$CANDIDATE_BRANCH"
+git switch --detach "$CANDIDATE_SHA"
+# Set PILOT_RELEASE_ID to that same SHA in infra/staging/.env.
 docker compose --env-file infra/staging/.env -f infra/staging/docker-compose.yml build api
 docker compose --env-file infra/staging/.env -f infra/staging/docker-compose.yml up -d
 curl --fail https://api.example.com/healthz
@@ -42,13 +53,19 @@ The migration container is idempotent and must finish successfully before the AP
 
 ## Building an APK connected to staging
 
-In GitHub open **Actions → connected-preview-apk → Run workflow** and enter the full URL ending in `/api/v1`, for example:
+In GitHub open **Actions → connected-preview-apk → Run workflow**, select the
+candidate branch and confirm its workflow checkout SHA. Enter the full URL
+ending in `/api/v1`, for example:
 
 ```text
 https://api.example.com/api/v1
 ```
 
-The workflow rejects plain HTTP, probes `/healthz`, type-checks the app, builds a standalone APK with the URL embedded in `BuildConfig`, and uploads it as `athletica-ai-connected-preview-apk` for 14 days.
+Enter that deployed SHA as `expected_release_id` too. Confirm the workflow
+checkout SHA, server `release_id` and candidate SHA all agree. The workflow
+checks the public API route, type-checks the app, builds a standalone APK with
+the URL embedded in `BuildConfig`, and uploads it as
+`athletica-ai-connected-preview-apk` for 14 days.
 
 ## Recovery and data safety
 

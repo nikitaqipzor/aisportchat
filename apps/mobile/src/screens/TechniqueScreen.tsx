@@ -20,6 +20,8 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
   const [selected, setSelected] = useState<TechniqueExercise | null>(null);
   const [history, setHistory] = useState<TechniqueResult[]>([]);
   const [result, setResult] = useState<TechniqueResult | null>(null);
+  const [resultFromHistory, setResultFromHistory] = useState(false);
+  const [historyLoadingId, setHistoryLoadingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [stage, setStage] = useState('');
   const [error, setError] = useState('');
@@ -66,6 +68,7 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
       frames: pose.frames,
     });
     setResult(analyzed);
+    setResultFromHistory(false);
     setHistory(current => [analyzed, ...current.filter(x => x.id !== analyzed.id)].slice(0, 8));
     setStage('');
   }
@@ -81,6 +84,18 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
       await submitPose('recorded', pose);
     } catch (e) { const issue = techniqueCaptureError(e); issue.cancelled ? setNotice(issue.message) : setError(issue.message); setStage(''); }
     finally { if (path) await techniqueVideo.cleanup(path).catch(() => undefined); setBusy(false); }
+  }
+
+  async function openHistory(analysisId: string) {
+    setHistoryLoadingId(analysisId);
+    setError('');
+    try {
+      setResult(await api.techniqueAnalysis(accessToken, analysisId));
+      setResultFromHistory(true);
+      setPosePreview(null);
+      setNativeLiveCount(null);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось открыть сохранённый анализ'); }
+    finally { setHistoryLoadingId(null); }
   }
 
   async function liveAndAnalyze() {
@@ -134,10 +149,11 @@ export function TechniqueScreen({accessToken, onBack, workoutContext, onUseLinke
     {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
     {posePreview && <PoseSkeletonPreview frame={posePreview} />}
     {result && <ResultCard result={result} nativeLiveCount={nativeLiveCount} />}
-    {result && workoutContext && linkedKey && onUseLinkedResult ? <AppButton label={`Использовать ${result.rep_count} повторений в подходе`} onPress={() => onUseLinkedResult(result)} testID="technique-use-result" /> : null}
+    {result && result.rep_count > 0 && workoutContext && linkedKey && onUseLinkedResult && !resultFromHistory ? <AppButton label={`Использовать ${result.rep_count} повторений в подходе`} onPress={() => onUseLinkedResult(result)} testID="technique-use-result" /> : null}
+    {result && result.rep_count === 0 && workoutContext && linkedKey && !resultFromHistory ? <Text accessibilityRole="alert" style={styles.warning}>Повторы не распознаны. Запишите подход ещё раз — нулевой результат нельзя перенести в тренировку.</Text> : null}
 
     <Text style={styles.section}>Последние анализы</Text>
-    {history.length === 0 ? <Text style={styles.muted}>Пока нет записей.</Text> : history.map(item => <View key={item.id} style={styles.history}><View style={{flex: 1}}><Text style={styles.historyTitle}>{item.exercise_name}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.rep_count} повт. · {item.capture_mode === 'live' ? 'LIVE' : 'VIDEO'}</Text></View><Text style={styles.scoreSmall}>{item.technique_score}</Text></View>)}
+    {history.length === 0 ? <Text style={styles.muted}>Пока нет записей.</Text> : history.map(item => <Pressable key={item.id} accessibilityRole="button" accessibilityLabel={`Открыть анализ ${item.exercise_name}`} onPress={()=>void openHistory(item.id)} disabled={Boolean(historyLoadingId)} style={styles.history}><View style={{flex: 1}}><Text style={styles.historyTitle}>{item.exercise_name}</Text><Text style={styles.muted}>{new Date(item.created_at).toLocaleString()} · {item.rep_count} повт. · {item.capture_mode === 'live' ? 'LIVE' : 'VIDEO'}</Text></View><Text style={styles.scoreSmall}>{historyLoadingId === item.id ? '…' : item.technique_score}</Text></Pressable>)}
   </ScrollView>;
 }
 

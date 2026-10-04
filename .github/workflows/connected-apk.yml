@@ -7,6 +7,10 @@ on:
         description: Public HTTPS API URL ending in /api/v1
         required: true
         type: string
+      expected_release_id:
+        description: Exact PILOT_RELEASE_ID expected from the deployed API
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,18 +20,13 @@ jobs:
     runs-on: ubuntu-latest
     env:
       AI_FITNESS_API_BASE_URL: ${{ inputs.api_base_url }}
+      EXPECTED_RELEASE_ID: ${{ inputs.expected_release_id }}
+      WORKFLOW_COMMIT_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate and probe API
         shell: bash
-        run: |
-          set -euo pipefail
-          case "$AI_FITNESS_API_BASE_URL" in
-            https://*/api/v1) ;;
-            *) echo "api_base_url must be HTTPS and end in /api/v1" >&2; exit 1 ;;
-          esac
-          health_url="${AI_FITNESS_API_BASE_URL%/api/v1}/healthz"
-          curl --fail --silent --show-error --retry 8 --retry-all-errors --retry-delay 5 "$health_url"
+        run: ./scripts/preflight-connected-api.sh "$AI_FITNESS_API_BASE_URL" "$EXPECTED_RELEASE_ID" "$WORKFLOW_COMMIT_SHA"
       - uses: actions/setup-node@v4
         with:
           node-version: 22.16.0

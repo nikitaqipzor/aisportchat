@@ -23,9 +23,7 @@ spec_ops = {
     if method.upper() in methods
 }
 
-# /healthz is intentionally an infrastructure endpoint outside the public /api/v1 spec.
-allowed_router_only = {("GET", "/healthz")}
-router_only = normalized_routes - spec_ops - allowed_router_only
+router_only = normalized_routes - spec_ops
 spec_only = spec_ops - normalized_routes
 
 if router_only or spec_only:
@@ -39,4 +37,4 @@ if router_only or spec_only:
             print("  ", op)
     sys.exit(1)
 
-print(f"API contract aligned: {len(spec_ops)} OpenAPI operations, {len(routes)} router routes (+ /healthz)")
+print(f"API contract aligned: {len(spec_ops)} OpenAPI operations, {len(routes)} router routes")

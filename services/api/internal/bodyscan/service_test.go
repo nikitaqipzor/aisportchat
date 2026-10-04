@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -19,6 +20,20 @@ import (
 type deleteFailingMedia struct {
 	media.Store
 	failKey string
+}
+
+type upsertFailingStore struct {
+	store.Store
+	failAfterCommit bool
+}
+
+func (s *upsertFailingStore) UpsertBodyScanPhoto(ctx context.Context, photo store.BodyScanPhoto) (store.BodyScanDetails, error) {
+	if s.failAfterCommit {
+		if _, err := s.Store.UpsertBodyScanPhoto(ctx, photo); err != nil {
+			return store.BodyScanDetails{}, err
+		}
+	}
+	return store.BodyScanDetails{}, errors.New("injected database failure")
 }
 
 func (m *deleteFailingMedia) Delete(ctx context.Context, key string) error {
@@ -120,7 +135,7 @@ func TestBodyScanFlowAndPrivacy(t *testing.T) {
 	}
 }
 
-func TestDeleteKeepsMetadataWhenPrivateBlobDeletionFails(t *testing.T) {
+func TestDeleteQueuesPrivateBlobDeletionFailureForRetry(t *testing.T) {
 	ctx := context.Background()
 	st := store.NewMemory()
 	blobs := media.NewMemoryStore()
@@ -140,16 +155,223 @@ func TestDeleteKeepsMetadataWhenPrivateBlobDeletionFails(t *testing.T) {
 	if err := NewService(st, failing).Delete(ctx, user, scan.Scan.ID); err == nil {
 		t.Fatal("expected private blob deletion failure")
 	}
-	if _, err := svc.Get(ctx, user, scan.Scan.ID); err != nil {
-		t.Fatalf("metadata must remain available for retry: %v", err)
+	if _, err := svc.Get(ctx, user, scan.Scan.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted scan metadata still available: %v", err)
 	}
 	failing.failKey = ""
-	if err := NewService(st, failing).Delete(ctx, user, scan.Scan.ID); err != nil {
-		t.Fatalf("idempotent retry: %v", err)
+	if err := NewService(st, failing).retryMedia(ctx, user); err != nil {
+		t.Fatalf("queued retry: %v", err)
 	}
 	if _, err := svc.Get(ctx, user, scan.Scan.ID); err != store.ErrNotFound {
 		t.Fatalf("metadata still accessible after retry: %v", err)
 	}
+}
+
+func TestAddPhotoReplacementPreservesOldPhotoOnDatabaseFailure(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "replace-fail@example.com")
+	svc := NewService(st, blobs)
+	scan, err := svc.Create(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataURL := testImage(t, false)
+	scan, err = svc.AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := scan.Photos[0]
+	oldBlob, err := blobs.Get(ctx, old.StorageKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mediaTrack := &trackingMedia{Store: blobs}
+	failed := NewService(&upsertFailingStore{Store: st}, mediaTrack)
+	if _, err := failed.AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL); err == nil {
+		t.Fatal("expected database failure")
+	}
+	current, err := svc.Get(ctx, user, scan.Scan.ID)
+	if err != nil || len(current.Photos) != 1 || current.Photos[0].StorageKey != old.StorageKey {
+		t.Fatalf("original photo metadata changed: %+v, %v", current.Photos, err)
+	}
+	actual, err := svc.Photo(ctx, user, scan.Scan.ID, "front")
+	if err != nil || !bytes.Equal(actual.Bytes, oldBlob.Bytes) {
+		t.Fatalf("original photo unavailable: %v", err)
+	}
+	if mediaTrack.putKey == old.StorageKey || len(mediaTrack.deleted) != 1 || mediaTrack.deleted[0] != mediaTrack.putKey {
+		t.Fatalf("replacement cleanup damaged old photo: put=%q deleted=%v", mediaTrack.putKey, mediaTrack.deleted)
+	}
+	if _, err := blobs.Get(ctx, mediaTrack.putKey); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("failed replacement blob still accessible: %v", err)
+	}
+}
+
+type trackingMedia struct {
+	media.Store
+	putKey string
+	deleted []string
+}
+
+func (m *trackingMedia) Put(ctx context.Context, key, mime string, data []byte) error {
+	m.putKey = key
+	return m.Store.Put(ctx, key, mime, data)
+}
+func (m *trackingMedia) Delete(ctx context.Context, key string) error {
+	m.deleted = append(m.deleted, key)
+	return m.Store.Delete(ctx, key)
+}
+
+func TestAddPhotoCleansNewBlobOnFailedInsert(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	mediaTrack := &trackingMedia{Store: blobs}
+	user := testUser(t, st, "insert-fail@example.com")
+	scan, err := NewService(st, blobs).Create(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewService(&upsertFailingStore{Store: st}, mediaTrack).AddPhoto(ctx, user, scan.Scan.ID, "front", testImage(t, false)); err == nil {
+		t.Fatal("expected insert failure")
+	}
+	if mediaTrack.putKey == "" || len(mediaTrack.deleted) != 1 || mediaTrack.deleted[0] != mediaTrack.putKey {
+		t.Fatalf("new blob not cleaned: put=%q deleted=%v", mediaTrack.putKey, mediaTrack.deleted)
+	}
+	if _, err := blobs.Get(ctx, mediaTrack.putKey); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("orphan private blob accessible: %v", err)
+	}
+}
+
+func TestAddPhotoReplacementDeletesOldBlobOnlyAfterDatabaseSuccess(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "replace-success@example.com")
+	svc := NewService(st, blobs)
+	scan, err := svc.Create(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataURL := testImage(t, false)
+	scan, err = svc.AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := scan.Photos[0].StorageKey
+	scan, err = svc.AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scan.Photos) != 1 || scan.Photos[0].StorageKey == oldKey {
+		t.Fatalf("replacement key unchanged: %+v", scan.Photos)
+	}
+	if _, err := blobs.Get(ctx, oldKey); !errors.Is(err, media.ErrNotFound) {
+		t.Fatalf("replaced blob still accessible: %v", err)
+	}
+	if _, err := svc.Photo(ctx, user, scan.Scan.ID, "front"); err != nil {
+		t.Fatalf("replacement unavailable: %v", err)
+	}
+}
+
+func TestAddPhotoKeepsCommittedBlobWhenUpsertResultFails(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "commit-read-fail@example.com")
+	svc := NewService(st, blobs)
+	scan, err := svc.Create(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewService(&upsertFailingStore{Store: st, failAfterCommit: true}, blobs).AddPhoto(ctx, user, scan.Scan.ID, "front", testImage(t, false))
+	if err == nil {
+		t.Fatal("expected result failure")
+	}
+	if _, err := svc.Photo(ctx, user, scan.Scan.ID, "front"); err != nil {
+		t.Fatalf("committed blob incorrectly removed: %v", err)
+	}
+}
+
+func TestAddPhotoReportsOldBlobDeletionFailureWithoutDeletingCurrentPhoto(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "replace-delete-fail@example.com")
+	svc := NewService(st, blobs)
+	scan, err := svc.Create(ctx, user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataURL := testImage(t, false)
+	scan, err = svc.AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := scan.Photos[0].StorageKey
+	failing := &deleteFailingMedia{Store: blobs, failKey: oldKey}
+	_, err = NewService(st, failing).AddPhoto(ctx, user, scan.Scan.ID, "front", dataURL)
+	if err == nil || !strings.Contains(err.Error(), "delete body scan media") {
+		t.Fatalf("expected explicit cleanup failure, got %v", err)
+	}
+	current, err := svc.Get(ctx, user, scan.Scan.ID)
+	if err != nil || len(current.Photos) != 1 || current.Photos[0].StorageKey == oldKey {
+		t.Fatalf("replacement metadata must remain valid: %+v, %v", current.Photos, err)
+	}
+	if _, err := svc.Photo(ctx, user, scan.Scan.ID, "front"); err != nil {
+		t.Fatalf("new photo must remain available: %v", err)
+	}
+	failing.failKey = ""
+	if err := NewService(st, failing).retryMedia(ctx, user); err != nil { t.Fatalf("queued retry: %v", err) }
+	if _, err := blobs.Get(ctx, oldKey); !errors.Is(err, media.ErrNotFound) { t.Fatalf("old photo survived retry: %v", err) }
+}
+
+type gatedMedia struct {
+	media.Store
+	mu sync.Mutex
+	puts int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (m *gatedMedia) Put(ctx context.Context, key, mime string, data []byte) error {
+	m.mu.Lock()
+	m.puts++
+	index := m.puts
+	m.mu.Unlock()
+	if index == 1 { close(m.started); <-m.release }
+	return m.Store.Put(ctx, key, mime, data)
+}
+
+func TestConcurrentReshootsCleanupEverySupersededBlob(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	blobs := media.NewMemoryStore()
+	user := testUser(t, st, "reshoot-race@example.com")
+	base := NewService(st, blobs)
+	scan, err := base.Create(ctx, user)
+	if err != nil { t.Fatal(err) }
+	data := testImage(t, false)
+	scan, err = base.AddPhoto(ctx, user, scan.Scan.ID, "front", data)
+	if err != nil { t.Fatal(err) }
+	oldKey := scan.Photos[0].StorageKey
+	gated := &gatedMedia{Store: blobs, started: make(chan struct{}), release: make(chan struct{})}
+	svc := NewService(st, gated)
+	first := make(chan error, 1)
+	go func() { _, err := svc.AddPhoto(ctx, user, scan.Scan.ID, "front", data); first <- err }()
+	<-gated.started
+	second, err := svc.AddPhoto(ctx, user, scan.Scan.ID, "front", data)
+	if err != nil { t.Fatal(err) }
+	intermediateKey := second.Photos[0].StorageKey
+	close(gated.release)
+	if err := <-first; err != nil { t.Fatal(err) }
+	current, err := svc.Get(ctx, user, scan.Scan.ID)
+	if err != nil { t.Fatal(err) }
+	for _, key := range []string{oldKey, intermediateKey} {
+		if _, err := blobs.Get(ctx, key); !errors.Is(err, media.ErrNotFound) { t.Fatalf("superseded media %q remains: %v", key, err) }
+	}
+	if _, err := blobs.Get(ctx, current.Photos[0].StorageKey); err != nil { t.Fatalf("active media removed: %v", err) }
 }
 
 func TestBodyScanRejectsDarkImage(t *testing.T) {
