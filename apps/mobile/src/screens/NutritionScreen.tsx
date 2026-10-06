@@ -4,6 +4,7 @@ import {api} from '../api/client';
 import type {FoodEntry, NutritionDay, NutritionHistoryItem} from '../api/client';
 import {AppButton} from '../components/AppButton';
 import {currentLocalDate, localTimeZone, nextNutritionDateOnRollover, shiftLocalDate} from '../domain/date';
+import {withFoodIdempotency} from '../domain/foodIdempotency';
 import {colors, control, radius, spacing} from '../theme/tokens';
 
 function Metric({title, value, target, unit}: {title: string; value: number; target: number; unit: string}) {
@@ -44,6 +45,7 @@ export function NutritionScreen({
   const [deletingId, setDeletingId] = useState('');
   const [repeatingId, setRepeatingId] = useState('');
   const [undoEntry, setUndoEntry] = useState<FoodEntry | null>(null);
+  const [undoing, setUndoing] = useState(false);
   const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestVersion = useRef(0);
   const selectedDateRef = useRef(selectedDate);
@@ -138,20 +140,24 @@ export function NutritionScreen({
   }
 
   async function undoDelete() {
-    if (!undoEntry) return;
+    if (!undoEntry || undoing) return;
     const entry = undoEntry;
     try {
-      setUndoEntry(null);
+      setUndoing(true);
       if (undoTimer.current) clearTimeout(undoTimer.current);
-      await api.logFood(accessToken, {
+      await withFoodIdempotency(`undo-${entry.id}`,JSON.stringify({entryId:entry.id}),key=>api.logFood(accessToken, {
         food_id: entry.food_id,
         meal_type: entry.meal_type,
         quantity_g: entry.quantity_g,
         logged_at: entry.logged_at,
-      }, localTimeZone());
+        idempotency_key:key,
+      }, localTimeZone()));
+      setUndoEntry(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось вернуть запись');
+    } finally {
+      setUndoing(false);
     }
   }
 
@@ -160,7 +166,7 @@ export function NutritionScreen({
     try {
       setRepeatingId(entry.id);
       setError('');
-      await api.repeatFoodEntry(accessToken, entry.id, entry.meal_type);
+      await withFoodIdempotency(`repeat-${entry.id}`,JSON.stringify({entryId:entry.id,meal:entry.meal_type}),key=>api.repeatFoodEntry(accessToken, entry.id, entry.meal_type,key));
       // The write endpoint may return a UTC summary; always read the local day back.
       if (selectedDateRef.current !== requestedDate) return;
       const today = currentLocalDate();
@@ -262,8 +268,8 @@ export function NutritionScreen({
       {undoEntry ? (
         <View style={styles.undoBar} accessibilityLiveRegion="polite">
           <Text style={styles.undoText}>«{undoEntry.food_name}» удалено</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="Отменить удаление" testID="nutrition-undo-delete" onPress={() => { void undoDelete(); }} style={styles.undoButton}>
-            <Text style={styles.undoAction}>Вернуть</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Отменить удаление" accessibilityState={{disabled:undoing}} disabled={undoing} testID="nutrition-undo-delete" onPress={() => { void undoDelete(); }} style={styles.undoButton}>
+            <Text style={styles.undoAction}>{undoing?'Возвращаем…':'Вернуть'}</Text>
           </Pressable>
         </View>
       ) : null}

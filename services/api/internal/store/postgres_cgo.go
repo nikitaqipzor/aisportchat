@@ -483,6 +483,17 @@ func (p *Postgres) GetRefreshSession(ctx context.Context, tokenHash string) (Ref
 	return RefreshSession{TokenHash: val(rows[0], 0), UserID: val(rows[0], 1), ExpiresAt: exp, RevokedAt: revoked}, nil
 }
 
+func (p *Postgres) ConsumeRefreshSession(ctx context.Context, tokenHash string) (RefreshSession, error) {
+	rows, err := p.query(ctx, `UPDATE auth_refresh_sessions SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL AND expires_at>now() RETURNING token_hash,user_id::text,expires_at::text,revoked_at::text`, sp(tokenHash))
+	if err != nil { return RefreshSession{}, err }
+	if len(rows) == 0 { return RefreshSession{}, ErrNotFound }
+	exp, err := parseTime(val(rows[0], 2))
+	if err != nil { return RefreshSession{}, err }
+	revoked, err := parseTime(val(rows[0], 3))
+	if err != nil { return RefreshSession{}, err }
+	return RefreshSession{TokenHash: val(rows[0], 0), UserID: val(rows[0], 1), ExpiresAt: exp, RevokedAt: &revoked}, nil
+}
+
 func (p *Postgres) RevokeRefreshSession(ctx context.Context, tokenHash string) error {
 	rows, err := p.query(ctx, `UPDATE auth_refresh_sessions SET revoked_at=COALESCE(revoked_at,now()) WHERE token_hash=$1 RETURNING token_hash`, sp(tokenHash))
 	if err != nil {
@@ -522,7 +533,11 @@ func (p *Postgres) CreateWorkout(ctx context.Context, w Workout, exercises []Wor
 }
 
 func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error) {
-	rows, err := p.query(ctx, `SELECT id::text,user_id::text,muscle,environment,status,duration_minutes::text,started_at::text,completed_at::text,duration_seconds::text,COALESCE(total_volume,0)::text,COALESCE(completion_percent,0)::text,COALESCE(ended_early,false)::text,COALESCE(is_favorite,false)::text,created_at::text FROM workouts WHERE id=$1::uuid AND user_id=$2::uuid`, sp(workoutID), sp(userID))
+	return p.getWorkoutWithQuery(ctx, userID, workoutID, p.query)
+}
+
+func (p *Postgres) getWorkoutWithQuery(ctx context.Context, userID, workoutID string, query func(context.Context, string, ...*string) ([][]*string, error)) (WorkoutDetails, error) {
+	rows, err := query(ctx, `SELECT id::text,user_id::text,muscle,environment,status,duration_minutes::text,started_at::text,completed_at::text,duration_seconds::text,COALESCE(total_volume,0)::text,COALESCE(completion_percent,0)::text,COALESCE(ended_early,false)::text,COALESCE(is_favorite,false)::text,created_at::text FROM workouts WHERE id=$1::uuid AND user_id=$2::uuid`, sp(workoutID), sp(userID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -533,7 +548,7 @@ func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (Wo
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
-	exRows, err := p.query(ctx, `SELECT id::text,workout_id::text,exercise_id,position::text,target_sets::text,target_reps_min::text,target_reps_max::text,target_weight::text,rest_seconds::text,COALESCE(progression_note,'') FROM workout_exercises WHERE workout_id=$1::uuid ORDER BY position`, sp(workoutID))
+	exRows, err := query(ctx, `SELECT id::text,workout_id::text,exercise_id,position::text,target_sets::text,target_reps_min::text,target_reps_max::text,target_weight::text,rest_seconds::text,COALESCE(progression_note,'') FROM workout_exercises WHERE workout_id=$1::uuid ORDER BY position`, sp(workoutID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -545,7 +560,7 @@ func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (Wo
 		}
 		exs = append(exs, ex)
 	}
-	setRows, err := p.query(ctx, `SELECT s.id::text,s.workout_exercise_id::text,s.set_number::text,s.weight::text,s.repetitions::text,s.rpe::text,s.rir::text,s.completed_at::text FROM workout_sets s JOIN workout_exercises e ON e.id=s.workout_exercise_id WHERE e.workout_id=$1::uuid ORDER BY e.position,s.set_number`, sp(workoutID))
+	setRows, err := query(ctx, `SELECT s.id::text,s.workout_exercise_id::text,s.set_number::text,s.weight::text,s.repetitions::text,s.rpe::text,s.rir::text,s.completed_at::text FROM workout_sets s JOIN workout_exercises e ON e.id=s.workout_exercise_id WHERE e.workout_id=$1::uuid ORDER BY e.position,s.set_number`, sp(workoutID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -561,7 +576,7 @@ func (p *Postgres) GetWorkout(ctx context.Context, userID, workoutID string) (Wo
 }
 
 func (p *Postgres) StartWorkout(ctx context.Context, userID, workoutID string) (WorkoutDetails, error) {
-	rows, err := p.query(ctx, `UPDATE workouts SET status='active',started_at=COALESCE(started_at,now()) WHERE id=$1::uuid AND user_id=$2::uuid AND status='planned' RETURNING id::text`, sp(workoutID), sp(userID))
+	rows, err := p.query(ctx, `UPDATE workouts w SET status='active',started_at=COALESCE(started_at,now()) WHERE w.id=$1::uuid AND w.user_id=$2::uuid AND w.status='planned' AND NOT EXISTS (SELECT 1 FROM program_sessions s JOIN programs p ON p.id=s.program_id WHERE s.workout_id=w.id AND p.status<>'active') RETURNING w.id::text`, sp(workoutID), sp(userID))
 	if err != nil {
 		return WorkoutDetails{}, err
 	}
@@ -572,6 +587,7 @@ func (p *Postgres) StartWorkout(ctx context.Context, userID, workoutID string) (
 }
 
 func (p *Postgres) UpsertWorkoutSet(ctx context.Context, userID, workoutID string, in WorkoutSet) (WorkoutDetails, error) {
+	if !validWorkoutSetMeasurements(in) { return WorkoutDetails{}, ErrInvalidState }
 	rows, err := p.query(ctx, `SELECT 1::text FROM workout_exercises e JOIN workouts w ON w.id=e.workout_id WHERE e.id=$1::uuid AND w.id=$2::uuid AND w.user_id=$3::uuid AND w.status='active'`, sp(in.WorkoutExerciseID), sp(workoutID), sp(userID))
 	if err != nil {
 		return WorkoutDetails{}, err
@@ -634,6 +650,19 @@ func (p *Postgres) ListWorkouts(ctx context.Context, userID string, limit int) (
 			return nil, er
 		}
 		out = append(out, d)
+	}
+	return out, nil
+}
+
+func (p *Postgres) ListWorkoutHistory(ctx context.Context, userID string, filter WorkoutHistoryFilter) ([]WorkoutDetails, error) {
+	var favorite *string
+	if filter.Favorite != nil { favorite = sp(strconv.FormatBool(*filter.Favorite)) }
+	rows, err := p.query(ctx, `SELECT id::text FROM workouts WHERE user_id=$1::uuid AND ($2='' OR muscle=$2) AND ($3='' OR environment=$3) AND ($4='' OR status=$4) AND ($5::text IS NULL OR is_favorite=$5::boolean) ORDER BY created_at DESC,id DESC LIMIT $6::int OFFSET $7::int`, sp(userID), sp(filter.Muscle), sp(filter.Environment), sp(filter.Status), favorite, sp(strconv.Itoa(filter.Limit)), sp(strconv.Itoa(filter.Offset)))
+	if err != nil { return nil, err }
+	out := make([]WorkoutDetails, 0, len(rows))
+	for _, row := range rows {
+		item, err := p.GetWorkout(ctx, userID, val(row, 0)); if err != nil { return nil, err }
+		out = append(out, item)
 	}
 	return out, nil
 }

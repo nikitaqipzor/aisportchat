@@ -6,6 +6,14 @@ export function currentLocalDate() {
   return `${y}-${m}-${day}`;
 }
 
+// Program dates are calendar days. Rendering them as UTC instants shifts the day
+// in time zones west of UTC.
+export function formatCalendarDate(value: string, locale = 'ru-RU') {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (!match) return value;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12).toLocaleDateString(locale);
+}
+
 // IANA zone names let the API calculate calendar-day boundaries across DST changes.
 // Older runtimes without Intl keep the API's UTC default rather than sending a guess.
 export function localTimeZone() {

@@ -1,9 +1,10 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View} from 'react-native';
 import {api, HistoryFilters, WorkoutProgressSummary, WorkoutView} from '../api/client';
 import {MuscleId, muscleMeta} from '../domain/muscles';
 import {AppButton} from '../components/AppButton';
 import {colors, control, radius, spacing} from '../theme/tokens';
+import {LatestRequestGuard} from '../domain/latestRequest';
 
 type EnvironmentFilter = 'all' | 'gym' | 'home' | 'band';
 
@@ -26,32 +27,44 @@ export function HistoryScreen({
   const [status, setStatus] = useState<StatusFilter>('completed');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const historyGuard = useRef(new LatestRequestGuard());
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [error, setError] = useState('');
   const [summaryError, setSummaryError] = useState(false);
 
   useEffect(() => {
-    void loadHistory();
+    void loadHistory(0);
+    return () => historyGuard.current.invalidate();
   }, [accessToken, environment, status, favoritesOnly]);
+
+  useEffect(() => () => historyGuard.current.unmount(), []);
 
   useEffect(() => {
     void loadSummary();
   }, [accessToken]);
 
-  async function loadHistory() {
+  async function loadHistory(offset = 0) {
+    const isLatest = historyGuard.current.begin();
     try {
-      setLoading(true);
+      if (offset === 0) { setItems([]); setHasMore(false); setLoading(true); }
+      else setLoadingMore(true);
       setError('');
-      const filters: HistoryFilters = {limit: 50};
+      const filters: HistoryFilters = {limit: 50, offset};
       if (environment !== 'all') filters.environment = environment;
       if (status !== 'all') filters.status = status;
       if (favoritesOnly) filters.favorite = true;
       const history = await api.workoutHistory(accessToken, filters);
-      setItems(history.items);
+      if (!isLatest()) return;
+      setItems(current => offset === 0 ? history.items : [...current, ...history.items]);
+      setHasMore(history.has_more);
     } catch (e) {
+      if (!isLatest()) return;
       setError(e instanceof Error ? e.message : 'Не удалось загрузить историю');
+      if (offset === 0) setItems([]);
     } finally {
-      setLoading(false);
+      if (isLatest()) {setLoading(false);setLoadingMore(false)}
     }
   }
 
@@ -98,10 +111,10 @@ export function HistoryScreen({
       </View>
 
       {loading ? <View style={styles.loading} accessibilityLiveRegion="polite"><ActivityIndicator color={colors.text}/><Text style={styles.muted}>Загружаем тренировки…</Text></View> : null}
-      {error ? <View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><AppButton label="Повторить" variant="secondary" onPress={()=>void loadHistory()}/></View> : null}
+      {error ? <View style={styles.errorBox}><Text accessibilityRole="alert" style={styles.error}>{error}</Text><AppButton label="Повторить" variant="secondary" onPress={()=>void loadHistory(items.length && hasMore ? items.length : 0)}/></View> : null}
       {!loading && !error && items.length === 0 ? <View style={styles.emptyCard}><Text style={styles.emptyTitle}>Нет тренировок</Text><Text style={styles.muted}>По выбранным фильтрам ничего не найдено. Попробуйте сбросить фильтры.</Text><AppButton label="Сбросить фильтры" variant="secondary" onPress={()=>{setEnvironment('all');setStatus('completed');setFavoritesOnly(false)}}/></View> : null}
 
-      {items.map(item => {
+      {!loading && items.map(item => {
         const muscle = item.workout.muscle as MuscleId;
         return (
           <Pressable key={item.workout.id} accessibilityRole="button" accessibilityLabel={`Открыть тренировку: ${muscleMeta[muscle]?.title ?? item.workout.muscle}`} style={({pressed})=>[styles.card,pressed&&styles.pressed]} onPress={() => onSelect(item.workout.id)}>
@@ -117,6 +130,7 @@ export function HistoryScreen({
           </Pressable>
         );
       })}
+      {!loading && hasMore && !error ? <AppButton label="Показать ещё" variant="secondary" loading={loadingMore} disabled={loadingMore} onPress={() => void loadHistory(items.length)}/> : null}
     </ScrollView>
   );
 }

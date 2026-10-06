@@ -39,6 +39,8 @@ import {TechniqueWorkoutContext} from './src/domain/technique';
 import {BottomNavigation, MainTab} from './src/components/BottomNavigation';
 import {refreshTodayIfPossible} from './src/health/sync';
 import {healthConnect} from './src/native/healthConnect';
+import {restTimerCoordinator} from './src/domain/restTimer';
+import {clearPrivateTempFiles} from './src/native/privateCache';
 
 type Step = 'auth' | 'goal' | 'profile' | 'training' | 'profileSettings' | 'home' | 'muscle' | 'manualWorkout' | 'preview' | 'active' | 'summary' | 'history' | 'workoutDetail' | 'nutrition' | 'nutritionSetup' | 'foodSearch' | 'customFood' | 'recipes' | 'progress' | 'aiFood' | 'foodPhoto' | 'aiCoach' | 'weeklyAI' | 'programs' | 'programSetup' | 'programDetail' | 'bodyScan' | 'technique' | 'recovery' | 'devices';
 type Environment = 'home' | 'gym' | 'band';
@@ -91,6 +93,7 @@ export default function App() {
   const [tokens, setTokens] = useState<AuthTokens | null>(null);
   const [workout, setWorkout] = useState<WorkoutView | null>(null);
   const [summary, setSummary] = useState<FinishResult | null>(null);
+  const [summarySavedOnServer, setSummarySavedOnServer] = useState(true);
   const [booting, setBooting] = useState(true);
   const [systemMessage, setSystemMessage] = useState('');
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleId | null>(null);
@@ -103,6 +106,8 @@ export default function App() {
   const [techniqueContext, setTechniqueContext] = useState<TechniqueWorkoutContext | null>(null);
   const [techniquePrefill, setTechniquePrefill] = useState<{workoutExerciseId: string; setNumber: number; repCount: number; analysisId: string} | null>(null);
   const [devicesOrigin, setDevicesOrigin] = useState<'home' | 'progress'>('home');
+  const [foodSearchQuery, setFoodSearchQuery] = useState('');
+  const [aiFoodText, setAIFoodText] = useState('');
 
   const access = tokens?.access_token ?? '';
 
@@ -126,6 +131,8 @@ export default function App() {
         if (!next) {
           setWorkout(null);
           setSummary(null);
+          setFoodSearchQuery('');
+          setAIFoodText('');
           setStep('auth');
         }
       },
@@ -152,7 +159,10 @@ export default function App() {
         setStep('home');
         return true;
       }
-      if (step === 'nutritionSetup' || step === 'foodSearch' || step === 'customFood' || step === 'recipes' || step === 'aiFood') {
+      if (step === 'customFood') { setStep('foodSearch'); return true; }
+      if (step === 'foodSearch') { setFoodSearchQuery(''); setStep('nutrition'); return true; }
+      if (step === 'aiFood') { setAIFoodText(''); setStep('nutrition'); return true; }
+      if (step === 'nutritionSetup' || step === 'recipes') {
         setStep('nutrition');
         return true;
       }
@@ -310,8 +320,14 @@ export default function App() {
   async function finishWorkout() {
     if (!workout || !tokens) return;
     const currentTokens = (await syncPending(tokens)) ?? tokens;
+    // A failed queue flush must not let the server finish before queued sets.
+    if ((await sessionStorage.loadQueue()).some(item => item.workoutId === workout.workout.id && item.type === 'log_set')) {
+      await finishWorkoutOffline();
+      return;
+    }
     try {
       const result = await api.finishWorkout(currentTokens.access_token, workout.workout.id);
+      setSummarySavedOnServer(true);
       setSummary(result);
       setWorkout(result.workout);
       await sessionStorage.saveActiveWorkout(null);
@@ -320,23 +336,33 @@ export default function App() {
     } catch (error) {
       if (!api.isNetworkError(error)) {
         setSystemMessage(error instanceof Error ? error.message : 'Не удалось завершить тренировку.');
-        return;
+        throw error;
       }
-      await sessionStorage.enqueueFinish(workout.workout.id);
-      const result = localFinished(workout);
-      setSummary(result);
-      setWorkout(result.workout);
-      await sessionStorage.saveActiveWorkout(null);
-      setTechniquePrefill(null);
-      setSystemMessage('Тренировка завершена офлайн. Она появится в истории после синхронизации.');
-      setStep('summary');
+      await finishWorkoutOffline();
     }
+  }
+
+  async function finishWorkoutOffline() {
+    if (!workout) return;
+    await sessionStorage.enqueueFinish(workout.workout.id);
+    const result = localFinished(workout);
+    setSummarySavedOnServer(false);
+    setSummary(result);
+    setWorkout(result.workout);
+    await sessionStorage.saveActiveWorkout(null);
+    setTechniquePrefill(null);
+    setSystemMessage('Тренировка завершена офлайн. Она появится в истории после синхронизации.');
+    setStep('summary');
   }
 
   async function cancelWorkout() {
     if (!workout || !tokens) return;
     const workoutID = workout.workout.id;
     const currentTokens = (await syncPending(tokens)) ?? tokens;
+    if ((await sessionStorage.loadQueue()).some(item => item.workoutId === workoutID && item.type === 'log_set')) {
+      await cancelWorkoutOffline(workoutID);
+      return;
+    }
     try {
       await api.cancelWorkout(currentTokens.access_token, workoutID);
       await sessionStorage.removeWorkoutOperations(workoutID);
@@ -349,16 +375,20 @@ export default function App() {
     } catch (error) {
       if (!api.isNetworkError(error)) {
         setSystemMessage(error instanceof Error ? error.message : 'Не удалось отменить тренировку.');
-        return;
+        throw error;
       }
-      await sessionStorage.enqueueCancel(workoutID);
-      await sessionStorage.saveActiveWorkout(null);
-      setWorkout(null);
-      setSelectedMuscle(null);
-      setTechniquePrefill(null);
-      setSystemMessage('Отмена сохранена офлайн и будет синхронизирована при появлении сети.');
-      setStep('home');
+      await cancelWorkoutOffline(workoutID);
     }
+  }
+
+  async function cancelWorkoutOffline(workoutID: string) {
+    await sessionStorage.enqueueCancel(workoutID);
+    await sessionStorage.saveActiveWorkout(null);
+    setWorkout(null);
+    setSelectedMuscle(null);
+    setTechniquePrefill(null);
+    setSystemMessage('Отмена сохранена офлайн и будет синхронизирована при появлении сети.');
+    setStep('home');
   }
 
   async function performLogout() {
@@ -369,6 +399,8 @@ export default function App() {
     setWorkout(null);
     setSummary(null);
     setSystemMessage('');
+    setFoodSearchQuery('');
+    setAIFoodText('');
     setTechniqueContext(null);
     setTechniquePrefill(null);
     setStep('auth');
@@ -382,6 +414,40 @@ export default function App() {
       return;
     }
     await performLogout();
+  }
+
+  async function deleteAccount() {
+    if (!tokens) throw new Error('Сначала войдите в аккаунт.');
+    const owner = await sessionStorage.currentUserId();
+    // An unsuccessful server request leaves the account and local data intact.
+    const deleteStatus = await api.deleteAccount(tokens.access_token);
+    // Invalidate token refresh before clearing storage; the deleted account cannot be restored.
+    api.setCurrentTokens(null);
+    let tokenCleanupFailed = false;
+    try { await sessionStorage.clearTokens(); } catch { tokenCleanupFailed = true; }
+    const cleanup = await Promise.allSettled([
+      sessionStorage.clearDeletedAccountData(owner),
+      owner ? healthConnect.clearPassiveSync(owner) : Promise.resolve(),
+      restTimerCoordinator.invalidate(),
+      clearPrivateTempFiles().then(cleared => { if (!cleared) throw new Error('Не удалось очистить временные файлы'); }),
+    ]);
+    setTokens(null);
+    setWorkout(null);
+    setSummary(null);
+    setSelectedMuscle(null);
+    setSelectedWorkoutId(null);
+    setSelectedProgramId(null);
+    setTechniqueContext(null);
+    setTechniquePrefill(null);
+    setFoodSearchQuery('');
+    setAIFoodText('');
+    setStep('auth');
+    setSystemMessage('');
+    const mediaNote = deleteStatus === 202 ? ' Удаление снимков на сервере поставлено в очередь; сервер будет повторять очистку.' : '';
+    const localNote = tokenCleanupFailed || cleanup.some(result => result.status === 'rejected')
+      ? ' Некоторые данные на телефоне не удалось очистить. Очистите данные приложения в настройках Android.'
+      : ' Локальные данные приложения очищены.';
+    Alert.alert('Аккаунт удалён', `Аккаунт удалён из активной системы.${mediaNote}${localNote}`);
   }
 
   const mainTab: MainTab | null =
@@ -422,16 +488,16 @@ export default function App() {
       }} />}
       {step === 'home' && <HomeScreen accessToken={access} onMuscle={(muscle, environment) => {setSelectedMuscle(muscle); setSelectedEnvironment(environment); setStep('muscle');}} onManualWorkout={() => {setSelectedMuscle(null); setStep('manualWorkout');}} onHistory={() => setStep('history')} onPrograms={() => setStep('programs')} onAI={() => setStep('aiCoach')} onRecovery={() => setStep('recovery')} onDevices={() => {setDevicesOrigin('home');setStep('devices')}} onProfile={() => setStep('profileSettings')} />}
       {step === 'manualWorkout' && <ManualWorkoutScreen accessToken={access} onBack={() => setStep('home')} onCreated={next => {setWorkout(next);setSelectedMuscle(null);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('manualWorkout');setPreviewCanStart(true);setStep('preview')}} />}
-      {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} />}
+      {step === 'profileSettings' && <AthleteProfileScreen accessToken={access} onBack={() => setStep('home')} onLogout={logout} onDeleteAccount={deleteAccount} />}
       {step === 'muscle' && selectedMuscle && <MuscleDetailScreen accessToken={access} muscle={selectedMuscle} environment={selectedEnvironment} onBack={() => setStep('home')} onWorkout={next => {setWorkout(next);setPreviewOrigin('muscle');setPreviewCanStart(true);setStep('preview');}} />}
       {step === 'preview' && workout && <WorkoutPreviewScreen accessToken={access} workout={workout} canStart={previewCanStart} onBack={() => setStep(previewOrigin === 'manualWorkout' ? 'home' : previewOrigin)} onStart={next => {void updateWorkout(next); setStep('active');}} />}
       {step === 'active' && workout && <ActiveWorkoutScreen accessToken={access} workout={workout} onWorkoutChange={next => {void updateWorkout(next);}} onFinish={finishWorkout} onCancel={cancelWorkout} techniquePrefill={techniquePrefill} onTechnique={context => {setTechniqueContext(context); setStep('technique');}} />}
-      {step === 'summary' && summary && <WorkoutSummaryScreen result={summary} onDone={() => {setWorkout(null); setSummary(null); setSelectedMuscle(null); setStep('home');}} />}
+      {step === 'summary' && summary && <WorkoutSummaryScreen result={summary} savedOnServer={summarySavedOnServer} onDone={() => {setWorkout(null); setSummary(null); setSelectedMuscle(null); setStep('home');}} />}
       {step === 'history' && <HistoryScreen accessToken={access} onBack={() => setStep('home')} onSelect={workoutId => {setSelectedWorkoutId(workoutId);setWorkoutDetailOrigin('history');setStep('workoutDetail');}} />}
-      {step === 'workoutDetail' && selectedWorkoutId && <WorkoutDetailScreen accessToken={access} workoutId={selectedWorkoutId} backLabel={workoutDetailOrigin === 'programDetail' ? 'Программа' : 'История'} onBack={() => setStep(workoutDetailOrigin)} onOpenPlanned={next => {setWorkout(next);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} onResume={next => {void updateWorkout(next);setStep('active');}} onRepeat={next => {setWorkout(next);setSelectedWorkoutId(next.workout.id);setSelectedMuscle(next.workout.muscle as MuscleId);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} />}
+      {step === 'workoutDetail' && selectedWorkoutId && <WorkoutDetailScreen accessToken={access} workoutId={selectedWorkoutId} backLabel={workoutDetailOrigin === 'programDetail' ? 'Программа' : 'История'} onBack={() => setStep(workoutDetailOrigin)} onOpenPlanned={next => {setWorkout(next);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} onResume={next => {void updateWorkout(next);setStep('active');}} onRepeat={next => {setWorkout(next);setSelectedMuscle(next.workout.muscle as MuscleId);setSelectedEnvironment(next.workout.environment);setPreviewOrigin('workoutDetail');setPreviewCanStart(true);setStep('preview');}} />}
       {step === 'nutrition' && <NutritionScreen accessToken={access} onBack={() => setStep('home')} onSetup={() => setStep('nutritionSetup')} onAddFood={() => setStep('foodSearch')} onRecipes={() => setStep('recipes')} onAI={() => setStep('aiFood')} />}
       {step === 'nutritionSetup' && <NutritionSetupScreen accessToken={access} onBack={() => setStep('nutrition')} onSaved={() => setStep('nutrition')} />}
-      {step === 'foodSearch' && <FoodSearchScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} onCustom={() => setStep('customFood')} onRecipes={() => setStep('recipes')} />}
+      {step === 'foodSearch' && <FoodSearchScreen accessToken={access} initialQuery={foodSearchQuery} onQueryChange={setFoodSearchQuery} onBack={() => {setFoodSearchQuery('');setStep('nutrition')}} onLogged={() => {setFoodSearchQuery('');setStep('nutrition')}} onCustom={() => setStep('customFood')} onRecipes={() => setStep('recipes')} />}
       {step === 'customFood' && <CustomFoodScreen accessToken={access} onBack={() => setStep('foodSearch')} onSaved={() => setStep('foodSearch')} />}
       {step === 'recipes' && <RecipesScreen accessToken={access} onBack={() => setStep('nutrition')} onLogged={() => setStep('nutrition')} />}
       {/* Keep the analytics tree mounted behind its tools. Legacy navigation contract: onDevices={() => setStep('devices')} */}
@@ -440,8 +506,8 @@ export default function App() {
       {step === 'devices' && <ConnectedDevicesScreen accessToken={access} origin={devicesOrigin} onBack={() => setStep(devicesOrigin)} />}
       {step === 'bodyScan' && <BodyScanScreen accessToken={access} onBack={() => setStep('progress')} />}
       {step === 'technique' && <TechniqueScreen accessToken={access} workoutContext={techniqueContext} onBack={() => {setStep(techniqueContext ? 'active' : 'progress'); setTechniqueContext(null);}} onUseLinkedResult={(result: TechniqueResult) => {if (!techniqueContext) return; setTechniquePrefill({workoutExerciseId: techniqueContext.workoutExerciseId, setNumber: techniqueContext.setNumber, repCount: result.rep_count, analysisId: result.id}); setTechniqueContext(null); setStep('active');}} />}
-      {step === 'aiFood' && <AIFoodInputScreen accessToken={access} onBack={() => setStep('nutrition')} onPhoto={() => setStep('foodPhoto')} onDone={() => setStep('nutrition')} />}
-      {step === 'foodPhoto' && <FoodPhotoScreen accessToken={access} onBack={() => setStep('aiFood')} onDone={() => setStep('nutrition')} />}
+      {step === 'aiFood' && <AIFoodInputScreen accessToken={access} initialText={aiFoodText} onTextChange={setAIFoodText} onBack={() => {setAIFoodText('');setStep('nutrition')}} onPhoto={() => setStep('foodPhoto')} onDone={() => {setAIFoodText('');setStep('nutrition')}} />}
+      {step === 'foodPhoto' && <FoodPhotoScreen accessToken={access} onBack={() => setStep('aiFood')} onDone={() => {setAIFoodText('');setStep('nutrition')}} />}
       {step === 'aiCoach' && <AICoachScreen accessToken={access} onBack={() => setStep('home')} onWeekly={() => setStep('weeklyAI')} />}
       {step === 'weeklyAI' && <WeeklyAIReportScreen accessToken={access} onBack={() => setStep('aiCoach')} />}
       {step === 'programs' && <ProgramsScreen accessToken={access} onBack={() => setStep('home')} onCreate={() => setStep('programSetup')} onOpen={programId => {setSelectedProgramId(programId); setStep('programDetail');}} />}

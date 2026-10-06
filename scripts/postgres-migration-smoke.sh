@@ -6,18 +6,15 @@ if [[ -z "$DSN" ]]; then
   echo "POSTGRES_TEST_DSN or DSN argument is required" >&2
   exit 2
 fi
+if [[ "${ALLOW_DESTRUCTIVE_MIGRATION_SMOKE:-0}" != "1" ]]; then
+  echo "This smoke test drops the migration ledger and rolls back every migration; set ALLOW_DESTRUCTIVE_MIGRATION_SMOKE=1 only for a disposable database" >&2
+  exit 2
+fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MIGRATIONS="$ROOT/services/api/migrations"
 
 apply_up() {
-  psql "$DSN" -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS schema_migrations (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());" >/dev/null
-  for file in "$MIGRATIONS"/*.up.sql; do
-    name="$(basename "$file")"
-    applied="$(psql "$DSN" -Atqc "SELECT 1 FROM schema_migrations WHERE filename='$name' LIMIT 1")"
-    [[ "$applied" == "1" ]] && continue
-    { echo 'BEGIN;'; cat "$file"; printf "\nINSERT INTO schema_migrations(filename) VALUES ('%s');\n" "$name"; echo 'COMMIT;'; } | psql "$DSN" -v ON_ERROR_STOP=1 >/dev/null
-    echo "UP   $name"
-  done
+  DATABASE_URL="$DSN" MIGRATIONS_DIR="$MIGRATIONS" "$MIGRATIONS/run.sh"
 }
 
 apply_down_all() {
@@ -31,7 +28,13 @@ apply_down_all() {
 }
 
 echo "Migration smoke: first UP"
-apply_up
+DATABASE_URL="$DSN" MIGRATIONS_DIR="$MIGRATIONS" "$MIGRATIONS/run.sh" &
+first_runner=$!
+DATABASE_URL="$DSN" MIGRATIONS_DIR="$MIGRATIONS" "$MIGRATIONS/run.sh" &
+second_runner=$!
+wait "$first_runner"
+wait "$second_runner"
+echo "Concurrent migration runners: PASS"
 echo "Migration smoke: full DOWN"
 apply_down_all
 echo "Migration smoke: second UP"
